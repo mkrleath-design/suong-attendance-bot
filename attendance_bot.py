@@ -156,7 +156,7 @@ async def handle_location(update: Update, context: ContextTypes.DEFAULT_TYPE):
     )
     
     # ផ្ញើបន្តទៅ Group ថ្នាក់ដឹកនាំសាលាក្រុង
-    GROUP_ID = "-4756534568"
+    GROUP_ID = "-5126809493"
     try:
         caption = (
             f"📢 វត្តមានមន្ត្រី៖ {username}\n"
