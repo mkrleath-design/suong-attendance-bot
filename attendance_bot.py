@@ -1,150 +1,131 @@
-import math
 import os
 import csv
-from datetime import datetime
-from telegram import Update, ReplyKeyboardMarkup, KeyboardButton, ReplyKeyboardRemove
+from datetime import datetime, timedelta
+from telegram import Update, ReplyKeyboardMarkup, ReplyKeyboardRemove
 from telegram.ext import (
     Application,
     CommandHandler,
     MessageHandler,
-    filters,
-    ContextTypes,
     ConversationHandler,
+    ContextTypes,
+    filters,
 )
 
-# =====================================
-# SUONG CITY ADMINISTRATION CONFIG
-# =====================================
-OFFICE_LAT = 11.916389  # និយាមការរដ្ឋបាលក្រុងសួង
-OFFICE_LON = 105.651028
-ALLOWED_RADIUS = 150    # រង្វង់ប្រតិបត្តិការ ១៥០ ម៉ែត្រ
+# កំណត់ទីតាំងសាលាក្រុងសួង (Latitude, Longitude)
+OFFICE_LAT = 11.9167
+OFFICE_LON = 105.6667
+ALLOWED_RADIUS_M = 150  # រង្វង់ ១៥០ ម៉ែត្រ
 
-# ⏰ កំណត់ម៉ោងរដ្ឋបាលផ្លូវការ (ចូលយឺតបំផុតត្រឹមម៉ោង ០៨:០០:០០ ព្រឹក)
-OFFICIAL_START_TIME = "08:00:00"  
+# ម៉ោងចូលការងារ (ម៉ោង ០៧:០០ ព្រឹក)
+WORK_START_HOUR = 7
+WORK_START_MIN = 0
 
-# 🆔 ដាក់លេខ ID Group ថ្នាក់ដឹកនាំដែលលោកទទួលបានពីជំហានទី១ ចូលទីនេះ
-LEADER_GROUP_ID = "-5126809493"  
+# ឈ្មោះឯកសាររក្សាទុកទិន្នន័យ
+REPORT_FILE = "attendance_records.csv"
 
-REPORT_FILE = "advanced_attendance_report.csv"
+# ស្ថានភាពសម្រាប់ Conversation
 PHOTO, LOCATION = range(2)
 
-def calculate_distance(lat1, lon1, lat2, lon2):
-    R = 6371000
-    phi1, phi2 = math.radians(lat1), math.radians(lat2)
-    delta_phi = math.radians(lat2 - lat1)
-    delta_lambda = math.radians(lon2 - lon1)
-    a = (math.sin(delta_phi / 2) ** 2 + math.cos(phi1) * math.cos(phi2) * math.sin(delta_lambda / 2) ** 2)
-    return R * (2 * math.atan2(math.sqrt(a), math.sqrt(1 - a)))
+# បង្កើតឯកសារ CSV បើមិនទាន់មាន
+if not os.path.exists(REPORT_FILE):
+    with open(REPORT_FILE, mode="w", newline="", encoding="utf-8-sig") as f:
+        writer = csv.writer(f)
+        writer.writerow(["កាលបរិច្ឆេទ", "ម៉ោង", "ID មន្ត្រី", "ឈ្មោះគណនី", "ស្ថានភាពម៉ោង", "ចម្ងាយ(ម៉ែត្រ)", "រដូវកាល", "ខែ", "ត្រីមាស", "ឆមាស"])
 
-def process_attendance_logic(user_id):
-    now = datetime.now()
-    today_str = now.strftime("%Y-%m-%d")
-    current_time_str = now.strftime("%H:%M:%S")
+def get_khmer_season_info(dt):
+    month = dt.month
+    year = dt.year
     
-    attendance_type = "Check-In (ចូលធ្វើការ)"
-    punctuality = "ទាន់ពេលវេលា"
+    # កំណត់រដូវកាល
+    season = "រដូវវស្សា" if 5 <= month <= 10 else "រដូវប្រាំង"
     
-    if os.path.exists(REPORT_FILE):
-        with open(REPORT_FILE, mode="r", encoding="utf-8-sig") as file:
-            reader = csv.reader(file)
-            next(reader, None)
-            for row in reader:
-                if row[0] == today_str and row[2] == str(user_id):
-                    attendance_type = "Check-Out (ចេញពីការិយាល័យ)"
-                    punctuality = "សម្រាកតាមម៉ោងកំណត់"
-                    break
-
-    if attendance_type == "Check-In (ចូលធ្វើការ)":
-        fmt = "%H:%M:%S"
-        t_actual = datetime.strptime(current_time_str, fmt)
-        t_official = datetime.strptime(OFFICIAL_START_TIME, fmt)
-        if t_actual > t_official:
-            minutes_late = int((t_actual - t_official).total_seconds() / 60)
-            punctuality = f"យឺតពេល ({minutes_late} នាទី)"
-            
-    return attendance_type, punctuality
-
-def save_to_advanced_report(user_id, username, full_name, distance, att_type, punctuality):
-    file_exists = os.path.isfile(REPORT_FILE)
-    now = datetime.now()
-    month = now.month
+    # កំណត់ត្រីមាស
     quarter = f"ត្រីមាសទី{(month-1)//3 + 1}"
+    
+    # កំណត់ឆមាស
     semester = "ឆមាសទី១" if month <= 6 else "ឆមាសទី២"
-    year = now.strftime("%Y")
+    
+    return season, quarter, semester
 
-    with open(REPORT_FILE, mode="a", newline="", encoding="utf-8-sig") as file:
-        writer = csv.writer(file)
-        if not file_exists:
-            writer.writerow(["កាលបរិច្ឆេទ", "ម៉ោងជាក់ស្តែង", "Telegram ID", "គណនី", "ឈ្មោះមន្ត្រី", "ប្រភេទវត្តមាន", "ស្ថានភាពម៉ោង", "ចម្ងាយ (ម)", "ត្រីមាស", "ឆមាស", "ឆ្នាំ"])
-        writer.writerow([now.strftime("%Y-%m-%d"), now.strftime("%H:%M:%S"), user_id, f"@{username}" if username else "គ្មាន", full_name, att_type, punctuality, round(distance, 1), quarter, semester, year])
+def calculate_distance(lat1, lon1, lat2, lon2):
+    from math import radians, cos, sin, asin, sqrt
+    lat1, lon1, lat2, lon2 = map(radians, [lat1, lon1, lat2, lon2])
+    dlat = lat2 - lat1
+    dlon = lon2 - lon1
+    a = sin(dlat/2)**2 + cos(lat1) * cos(lat2) * sin(dlon/2)**2
+    c = 2 * asin(sqrt(a))
+    r = 6371000  # កាំផែនដីជាម៉ែត្រ
+    return c * r
 
-async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-    context.user_data.clear()
+async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(
-        "👋 សូមស្វាគមន៍មកកាន់ប្រព័ន្ធកត់ត្រាវត្តមានរដ្ឋបាលក្រុងសួង\n\n"
-        "📸 សូមថតរូប **រូបថតផ្ទាល់ភ្លាមៗ (Selfie)** របស់អ្នកដើម្បីបញ្ជាក់វត្តមាន។",
-        reply_markup=ReplyKeyboardRemove()
+        "📥 ស្វាគមន៍មកកាន់ប្រព័ន្ធគ្រប់គ្រងវត្តមានរដ្ឋបាលក្រុងសួង!\n"
+        "សូមផ្ញើរូបថត Selfie ផ្ទាល់ខ្លួនរបស់អ្នក ដើម្បីចាប់ផ្តើមចុះវត្តមាន។"
     )
     return PHOTO
 
-async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-    if not update.message.photo:
-        await update.message.reply_text("❌ សូមផ្ញើជារូបថត (Selfie) របស់អ្នក!")
-        return PHOTO
-
-    context.user_data['photo_id'] = update.message.photo[-1].file_id
+async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    photo_file = await update.message.photo[-1].get_file()
+    context.user_data['photo_id'] = photo_file.file_id
     
-    # 🔒 បង្ខំឱ្យប្រើប្រាស់ប្រព័ន្ធទាញ GPS ពីឧបករណ៍ផ្ទាល់ទូរស័ព្ទដៃ
-    location_button = KeyboardButton(text="📍 ផ្ញើទីតាំងបច្ចុប្បន្ន (Share GPS Location)", request_location=True)
-    keyboard = ReplyKeyboardMarkup([[location_button]], resize_keyboard=True, one_time_keyboard=True)
+    # បង្កើតប៊ូតុងស្នើសុំទីតាំង
+    location_keyboard = [[{"text": "📍 ផ្ញើទីតាំងបច្ចុប្បន្ន (Share GPS)", "request_location": True}]]
+    reply_markup = ReplyKeyboardMarkup(location_keyboard, one_time_keyboard=True, resize_keyboard=True)
     
     await update.message.reply_text(
-        "📷 រូបថតត្រូវបានបញ្ចូលជោគជ័យ។\n\n"
-        "📍 សូមចុចប៊ូតុងខាងក្រោម `📍 ផ្ញើទីតាំងបច្ចុប្បន្ន` ដើម្បីផ្ទៀងផ្ទាត់ចម្ងាយការិយាល័យ។",
-        reply_markup=keyboard
+        "📸 ទទួលបានរូបថតជោគជ័យ! ជាបន្តសូមចុចប៊ូតុងខាងក្រោមដើម្បីផ្ញើទីតាំង GPS របស់អ្នក។",
+        reply_markup=reply_markup
     )
     return LOCATION
 
-async def handle_location(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-    if not update.message.location:
-        await update.message.reply_text("❌ សូមប្រើប្រាស់ប៊ូតុងផ្ញើទីតាំងផ្លូវការរបស់ប្រព័ន្ធ!")
-        return LOCATION
-
+async def handle_location(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_loc = update.message.location
+    now = datetime.now()
+    
     distance = calculate_distance(user_loc.latitude, user_loc.longitude, OFFICE_LAT, OFFICE_LON)
-    user_info = update.message.from_user
-    photo_id = context.user_data.get('photo_id')
-    current_time = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-
-    if distance <= ALLOWED_RADIUS:
-        att_type, punctuality = process_attendance_logic(user_info.id)
-        save_to_advanced_report(user_info.id, user_info.username, user_info.full_name, distance, att_type, punctuality)
-
+    
+    if distance > ALLOWED_RADIUS_M:
         await update.message.reply_text(
-            f"✅ **កត់ត្រាវត្តមានជោគជ័យ!**\n\n👤 មន្ត្រី៖ {user_info.full_name}\n📝 ប្រភេទ៖ {att_type}\n⏰ ស្ថានភាព៖ {punctuality}\n📍 ចម្ងាយ៖ {round(distance, 1)} ម៉ែត្រ។",
+            f"❌ មិនអាចចុះវត្តមានបានទេ! អ្នកស្ថិតនៅចម្ងាយ {int(distance)} ម៉ែត្រ ក្រៅតំបន់សាលាក្រុងសួង (អនុញ្ញាតត្រឹម {ALLOWED_RADIUS_M} ម៉ែត្រ)។",
             reply_markup=ReplyKeyboardRemove()
         )
+        return ConversationHandler.END
 
-        leader_msg = (
-            f"📢 **របាយការណ៍វត្តមានមន្ត្រី (រដ្ឋបាលក្រុងសួង)**\n\n"
-            f"👤 មន្ត្រី៖ {user_info.full_name}\n"
-            f"📅 ពេលវេលា៖ {current_time}\n"
-            f"📝 ស្ថានភាព៖ {att_type} - {punctuality}\n"
-            f"📍 ទីតាំង៖ ផ្ទៀងផ្ទាត់រួចរាល់ (ចម្ងាយ {round(distance, 1)} ម៉ែត្រពីសាលាក្រុង)"
-        )
-        try:
-            await context.bot.send_photo(chat_id=LEADER_GROUP_ID, photo=photo_id, caption=leader_msg)
-        except Exception as e:
-            print(f"Error Send To Leaders: {e}")
-    else:
-        await update.message.reply_text(
-            f"❌ **ចុះវត្តមានមិនជោគជ័យទេ!**\n\nឧបករណ៍បង្ហាញថាអ្នកស្ថិតនៅក្រៅតំបន់ការិយាល័យរដ្ឋបាលក្រុងសួង។\n📍 ចម្ងាយជាក់ស្តែង៖ {round(distance, 1)} ម៉ែត្រ។",
-            reply_markup=ReplyKeyboardRemove()
-        )
-        
-    context.user_data.clear()
+    # គណនាស្ថានភាពមកទាន់ ឬយឺត
+    status_time = "ទាន់ពេល"
+    if now.hour > WORK_START_HOUR or (now.hour == WORK_START_HOUR and now.minute > WORK_START_MIN):
+        diff_mins = (now.hour - WORK_START_HOUR) * 60 + (now.minute - WORK_START_MIN)
+        status_time = f"យឺត {diff_mins} នាទី"
+
+    season, quarter, semester = get_khmer_season_info(now)
+    date_str = now.strftime("%Y-%m-%d")
+    time_str = now.strftime("%H:%M:%S")
+    user_id = update.message.from_user.id
+    username = update.message.from_user.full_name
+
+    # រក្សាទុកក្នុង CSV
+    with open(REPORT_FILE, mode="a", newline="", encoding="utf-8-sig") as f:
+        writer = csv.writer(f)
+        writer.writerow([date_str, time_str, user_id, username, status_time, int(distance), season, now.strftime("%B"), quarter, semester])
+
+    await update.message.reply_text(
+        f"✅ ចុះវត្តមានជោគជ័យ!\n🗓 កាលបរិច្ឆេទ៖ {date_str}\n⏰ ម៉ោង៖ {time_str}\n🎯 ស្ថានភាព៖ {status_time}",
+        reply_markup=ReplyKeyboardRemove()
+    )
+    
+    # ផ្ញើបន្តទៅ Group ថ្នាក់ដឹកនាំ (បើមាន GROUP_ID)
+    GROUP_ID = "-4756534568"  # ដាក់ ID ក្រុមរបស់លោកនៅទីនេះ
+    try:
+        caption = f"📢 វត្តមានមន្ត្រី៖ {username}\n⏰ ម៉ោង៖ {time_str}\n📍 ចម្ងាយ៖ {int(distance)}ម ពីសាលាក្រុង\n📌 ស្ថានភាព៖ {status_time}"
+        await context.bot.send_photo(chat_id=GROUP_ID, photo=context.user_data['photo_id'], caption=caption)
+    except Exception as e:
+        print(f"Error sending to group: {e}")
+
     return ConversationHandler.END
 
+# =========================================================================
+# ផ្នែកកូដថ្មីសម្រាប់ទាញរបាយការណ៍ (ចម្រាញ់តាម Daily, Weekly, Monthly...)
+# =========================================================================
 async def get_report(update: Update, context: ContextTypes.DEFAULT_TYPE):
     command = update.message.text
     if not os.path.exists(REPORT_FILE):
@@ -152,28 +133,67 @@ async def get_report(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
 
     now = datetime.now()
+    today_str = now.strftime("%Y-%m-%d")
     current_year = now.strftime("%Y")
     current_month = now.month
-    output_filename = f"វត្តមាន_{command.replace('/', '')}_{now.strftime('%Y%m%d')}.csv"
     
+    output_filename = f"វត្តមាន_{command.replace('/', '')}_{now.strftime('%Y%m%d')}.csv"
+    start_of_week = (now - timedelta(days=7)).date()
+    has_data = False
+
     with open(REPORT_FILE, mode="r", encoding="utf-8-sig") as src, open(output_filename, mode="w", newline="", encoding="utf-8-sig") as dest:
         reader = csv.reader(src)
         writer = csv.writer(dest)
+        
         header = next(reader, None)
-        if header: writer.writerow(header)
+        if header: 
+            writer.writerow(header)
             
         for row in reader:
-            if row[10] != current_year: continue
-            if command == "/report_quarter":
-                if row[8] == f"ត្រីមាសទី{(current_month-1)//3 + 1}": writer.writerow(row)
-            elif command == "/report_semester":
-                if row[9] == ("ឆមាសទី១" if current_month <= 6 else "ឆមាសទី២"): writer.writerow(row)
-            elif command == "/report_year":
-                writer.writerow(row)
+            row_date_str = row[0]
+            try:
+                row_date = datetime.strptime(row_date_str, "%Y-%m-%d").date()
+            except ValueError:
+                continue
+                
+            row_month = int(row_date_str.split("-")[1])
+            row_year = row_date_str.split("-")[0]
 
-    await update.message.reply_text(f"📊 កំពុងផ្ញើរបាយការណ៍ {command}...")
-    await update.message.reply_document(document=open(output_filename, "rb"))
-    os.remove(output_filename)
+            if command == "/report_day":
+                if row_date_str == today_str:
+                    writer.writerow(row)
+                    has_data = True
+            elif command == "/report_week":
+                if row_date >= start_of_week:
+                    writer.writerow(row)
+                    has_data = True
+            elif command == "/report_month":
+                if row_year == current_year and row_month == current_month:
+                    writer.writerow(row)
+                    has_data = True
+            elif command == "/report_quarter":
+                current_quarter = f"ត្រីមាសទី{(current_month-1)//3 + 1}"
+                if row_year == current_year and row[8] == current_quarter:
+                    writer.writerow(row)
+                    has_data = True
+            elif command == "/report_semester":
+                current_semester = "ឆមាសទី១" if current_month <= 6 else "ឆមាសទី២"
+                if row_year == current_year and row[9] == current_semester:
+                    writer.writerow(row)
+                    has_data = True
+            elif command == "/report_year":
+                if row_year == current_year:
+                    writer.writerow(row)
+                    has_data = True
+
+    if has_data:
+        await update.message.reply_text(f"📊 កំពុងរៀបចំ និងផ្ញើរបាយការណ៍ {command} ជូនលោក...")
+        await update.message.reply_document(document=open(output_filename, "rb"))
+    else:
+        await update.message.reply_text(f"ℹ️ មិនមានទិន្នន័យសម្រាប់របាយការណ៍ {command} ក្នុងអំឡុងពេលនេះទេ។")
+        
+    if os.path.exists(output_filename):
+        os.remove(output_filename)
 
 def main():
     BOT_TOKEN = "8966159307:AAFnHG8h-D6uhEhSh6LmUVe7Ujkpry9du2E"
@@ -189,6 +209,11 @@ def main():
     )
 
     app.add_handler(conv_handler)
+    
+    # ចុះឈ្មោះពាក្យបញ្ជាទាញរបាយការណ៍ទាំងអស់
+    app.add_handler(CommandHandler("report_day", get_report))
+    app.add_handler(CommandHandler("report_week", get_report))
+    app.add_handler(CommandHandler("report_month", get_report))
     app.add_handler(CommandHandler("report_quarter", get_report))
     app.add_handler(CommandHandler("report_semester", get_report))
     app.add_handler(CommandHandler("report_year", get_report))
