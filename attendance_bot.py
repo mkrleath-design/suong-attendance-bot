@@ -1,6 +1,7 @@
 import os
 import csv
 from datetime import datetime, timedelta
+import pytz  # បណ្ណាល័យសម្រាប់កំណត់ Timezone ឱ្យត្រូវម៉ោងខ្មែរ
 from telegram import Update, ReplyKeyboardMarkup, ReplyKeyboardRemove
 from telegram.ext import (
     Application,
@@ -16,35 +17,28 @@ OFFICE_LAT = 11.9167
 OFFICE_LON = 105.6667
 ALLOWED_RADIUS_M = 150  # រង្វង់ ១៥០ ម៉ែត្រ
 
-# ម៉ោងចូលការងារ (ម៉ោង ០៧:០០ ព្រឹក)
-WORK_START_HOUR = 7
-WORK_START_MIN = 0
-
 # ឈ្មោះឯកសាររក្សាទុកទិន្នន័យ
 REPORT_FILE = "attendance_records.csv"
 
 # ស្ថានភាពសម្រាប់ Conversation
 PHOTO, LOCATION = range(2)
 
-# បង្កើតឯកសារ CSV បើមិនទាន់មាន
+# បង្កើតឯកសារ CSV បើមិនទាន់មាន (ថែម ک្បាលតារាង "ប្រភេទវត្តមាន")
 if not os.path.exists(REPORT_FILE):
     with open(REPORT_FILE, mode="w", newline="", encoding="utf-8-sig") as f:
         writer = csv.writer(f)
-        writer.writerow(["កាលបរិច្ឆេទ", "ម៉ោង", "ID មន្ត្រី", "ឈ្មោះគណនី", "ស្ថានភាពម៉ោង", "ចម្ងាយ(ម៉ែត្រ)", "រដូវកាល", "ខែ", "ត្រីមាស", "ឆមាស"])
+        writer.writerow(["កាលបរិច្ឆេទ", "ម៉ោង", "ID មន្ត្រី", "ឈ្មោះគណនី", "ប្រភេទវត្តមាន", "ស្ថានភាពម៉ោង", "ចម្ងាយ(ម៉ែត្រ)", "រដូវកាល", "ខែ", "ត្រីមាស", "ឆមាស"])
+
+def get_khmer_timezone_now():
+    """ទាញយកម៉ោងបច្ចុប្បន្ននៅក្នុងប្រទេសកម្ពុជា ទោះ Server នៅឯណាក៏ដោយ"""
+    khmer_tz = pytz.timezone('Asia/Phnom_Penh')
+    return datetime.now(khmer_tz)
 
 def get_khmer_season_info(dt):
     month = dt.month
-    year = dt.year
-    
-    # កំណត់រដូវកាល
     season = "រដូវវស្សា" if 5 <= month <= 10 else "រដូវប្រាំង"
-    
-    # កំណត់ត្រីមាស
     quarter = f"ត្រីមាសទី{(month-1)//3 + 1}"
-    
-    # កំណត់ឆមាស
     semester = "ឆមាសទី១" if month <= 6 else "ឆមាសទី២"
-    
     return season, quarter, semester
 
 def calculate_distance(lat1, lon1, lat2, lon2):
@@ -54,8 +48,55 @@ def calculate_distance(lat1, lon1, lat2, lon2):
     dlon = lon2 - lon1
     a = sin(dlat/2)**2 + cos(lat1) * cos(lat2) * sin(dlon/2)**2
     c = 2 * asin(sqrt(a))
-    r = 6371000  # កាំផែនដីជាម៉ែត្រ
-    return c * r
+    return c * 6371000
+
+def check_attendance_shift(now_dt):
+    """
+    ពិនិត្យមើលម៉ោងខែ្មរជាក់ស្តែង ដើម្បីបែងចែកវេន និងស្ថានភាពវត្តមាន
+    ត្រឡប់មកវិញនូវ៖ (ប្រភេទវេន, ស្ថានភាពម៉ោង)
+    """
+    current_time = now_dt.time()
+    
+    # កំណត់ដែនម៉ោងនីមួយៗជាទម្រង់ (ចាប់ផ្តើម, បញ្ចប់)
+    shift_morning_in_start = datetime.strptime("07:30", "%H:%M").time()
+    shift_morning_in_end   = datetime.strptime("08:00", "%H:%M").time()
+    
+    shift_morning_out_start = datetime.strptime("11:00", "%H:%M").time()
+    shift_morning_out_end   = datetime.strptime("11:30", "%H:%M").time()
+    
+    shift_afternoon_in_start = datetime.strptime("14:00", "%H:%M").time()
+    shift_afternoon_in_end   = datetime.strptime("14:30", "%H:%M").time()
+    
+    shift_afternoon_out_start = datetime.strptime("17:00", "%H:%M").time()
+    shift_afternoon_out_end   = datetime.strptime("17:30", "%H:%M").time()
+
+    # --- ពិនិត្យវេនព្រឹក ---
+    # ១. ចូលការងារពេលព្រឹក
+    if shift_morning_in_start <= current_time <= shift_morning_in_end:
+        return "ចូលការងារ (ព្រឹក)", "ទាន់ពេល"
+    elif shift_morning_in_end < current_time < shift_morning_out_start:
+        return "ចូលការងារ (ព្រឹក)", "យឺត / អវត្តមាន"
+        
+    # ២. ចេញការងារពេលព្រឹក
+    elif shift_morning_out_start <= current_time <= shift_morning_out_end:
+        return "ចេញការងារ (ព្រឹក)", "ទាន់ពេល"
+    elif shift_morning_out_end < current_time < shift_afternoon_in_start:
+        return "ចេញការងារ (ព្រឹក)", "យឺត / អវត្តមាន"
+
+    # --- ពិនិត្យវេនរសៀល ---
+    # ៣. ចូលការងារពេលរសៀល
+    elif shift_afternoon_in_start <= current_time <= shift_afternoon_in_end:
+        return "ចូលការងារ (រសៀល)", "ទាន់ពេល"
+    elif shift_afternoon_in_end < current_time < shift_afternoon_out_start:
+        return "ចូលការងារ (រសៀល)", "យឺត / អវត្តមាន"
+        
+    # ៤. ចេញការងារពេលរសៀល
+    elif shift_afternoon_out_start <= current_time <= shift_afternoon_out_end:
+        return "ចេញការងារ (រសៀល)", "ទាន់ពេល"
+    
+    # ករណីបាញ់រូបចូលក្រៅម៉ោងកំណត់ទាំងស្រុង
+    else:
+        return "ក្រៅម៉ោងរដ្ឋបាល", "យឺត / អវត្តមាន"
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(
@@ -68,7 +109,6 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
     photo_file = await update.message.photo[-1].get_file()
     context.user_data['photo_id'] = photo_file.file_id
     
-    # បង្កើតប៊ូតុងស្នើសុំទីតាំង
     location_keyboard = [[{"text": "📍 ផ្ញើទីតាំងបច្ចុប្បន្ន (Share GPS)", "request_location": True}]]
     reply_markup = ReplyKeyboardMarkup(location_keyboard, one_time_keyboard=True, resize_keyboard=True)
     
@@ -80,7 +120,7 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def handle_location(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_loc = update.message.location
-    now = datetime.now()
+    now = get_khmer_timezone_now()  # ប្រើម៉ោងខ្មែរពិតប្រាកដ
     
     distance = calculate_distance(user_loc.latitude, user_loc.longitude, OFFICE_LAT, OFFICE_LON)
     
@@ -91,11 +131,8 @@ async def handle_location(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
         return ConversationHandler.END
 
-    # គណនាស្ថានភាពមកទាន់ ឬយឺត
-    status_time = "ទាន់ពេល"
-    if now.hour > WORK_START_HOUR or (now.hour == WORK_START_HOUR and now.minute > WORK_START_MIN):
-        diff_mins = (now.hour - WORK_START_HOUR) * 60 + (now.minute - WORK_START_MIN)
-        status_time = f"យឺត {diff_mins} នាទី"
+    # គណនាវេន និងស្ថានភាពម៉ោងតាមច្បាប់ថ្មី (៣០ នាទី)
+    attendance_type, status_time = check_attendance_shift(now)
 
     season, quarter, semester = get_khmer_season_info(now)
     date_str = now.strftime("%Y-%m-%d")
@@ -106,17 +143,27 @@ async def handle_location(update: Update, context: ContextTypes.DEFAULT_TYPE):
     # រក្សាទុកក្នុង CSV
     with open(REPORT_FILE, mode="a", newline="", encoding="utf-8-sig") as f:
         writer = csv.writer(f)
-        writer.writerow([date_str, time_str, user_id, username, status_time, int(distance), season, now.strftime("%B"), quarter, semester])
+        writer.writerow([date_str, time_str, user_id, username, attendance_type, status_time, int(distance), season, now.strftime("%B"), quarter, semester])
 
+    # ឆ្លើយតបទៅមន្ត្រីវិញជាភាសាខ្មែរផ្លូវការ
     await update.message.reply_text(
-        f"✅ ចុះវត្តមានជោគជ័យ!\n🗓 កាលបរិច្ឆេទ៖ {date_str}\n⏰ ម៉ោង៖ {time_str}\n🎯 ស្ថានភាព៖ {status_time}",
+        f"✅ រដ្ឋបាលក្រុងសួងទទួលបានវត្តមានរបស់អ្នករួចរាល់!\n"
+        f"🗓 កាលបរិច្ឆេទ៖ {date_str}\n"
+        f"⏰ ម៉ោង (កម្ពុជា)៖ {time_str}\n"
+        f"📋 ប្រភេទ៖ {attendance_type}\n"
+        f"🎯 ស្ថានភាព៖ {status_time}",
         reply_markup=ReplyKeyboardRemove()
     )
     
-    # ផ្ញើបន្តទៅ Group ថ្នាក់ដឹកនាំ (បើមាន GROUP_ID)
-    GROUP_ID = "-4756534568"  # ដាក់ ID ក្រុមរបស់លោកនៅទីនេះ
+    # ផ្ញើបន្តទៅ Group ថ្នាក់ដឹកនាំសាលាក្រុង
+    GROUP_ID = "-4756534568"
     try:
-        caption = f"📢 វត្តមានមន្ត្រី៖ {username}\n⏰ ម៉ោង៖ {time_str}\n📍 ចម្ងាយ៖ {int(distance)}ម ពីសាលាក្រុង\n📌 ស្ថានភាព៖ {status_time}"
+        caption = (
+            f"📢 វត្តមានមន្ត្រី៖ {username}\n"
+            f"⏰ ម៉ោង៖ {time_str} ({attendance_type})\n"
+            f"📍 ចម្ងាយ៖ {int(distance)}ម ពីសាលាក្រុង\n"
+            f"📌 ស្ថានភាព៖ {status_time}"
+        )
         await context.bot.send_photo(chat_id=GROUP_ID, photo=context.user_data['photo_id'], caption=caption)
     except Exception as e:
         print(f"Error sending to group: {e}")
@@ -124,7 +171,7 @@ async def handle_location(update: Update, context: ContextTypes.DEFAULT_TYPE):
     return ConversationHandler.END
 
 # =========================================================================
-# ផ្នែកកូដថ្មីសម្រាប់ទាញរបាយការណ៍ (ចម្រាញ់តាម Daily, Weekly, Monthly...)
+# ប្រព័ន្ធចម្រាញ់របាយការណ៍បត់បែនប្រចាំ ថ្ងៃ/សប្តាហ៍/ខែ/ត្រីមាស/ឆមាស/ឆ្នាំ
 # =========================================================================
 async def get_report(update: Update, context: ContextTypes.DEFAULT_TYPE):
     command = update.message.text
@@ -132,7 +179,7 @@ async def get_report(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("❌ មិនទាន់មានទិន្នន័យវត្តមានក្នុងប្រព័ន្ធឡើយ។")
         return
 
-    now = datetime.now()
+    now = get_khmer_timezone_now()
     today_str = now.strftime("%Y-%m-%d")
     current_year = now.strftime("%Y")
     current_month = now.month
@@ -173,12 +220,12 @@ async def get_report(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     has_data = True
             elif command == "/report_quarter":
                 current_quarter = f"ត្រីមាសទី{(current_month-1)//3 + 1}"
-                if row_year == current_year and row[8] == current_quarter:
+                if row_year == current_year and row[9] == current_quarter:
                     writer.writerow(row)
                     has_data = True
             elif command == "/report_semester":
                 current_semester = "ឆមាសទី១" if current_month <= 6 else "ឆមាសទី២"
-                if row_year == current_year and row[9] == current_semester:
+                if row_year == current_year and row[10] == current_semester:
                     writer.writerow(row)
                     has_data = True
             elif command == "/report_year":
@@ -209,8 +256,6 @@ def main():
     )
 
     app.add_handler(conv_handler)
-    
-    # ចុះឈ្មោះពាក្យបញ្ជាទាញរបាយការណ៍ទាំងអស់
     app.add_handler(CommandHandler("report_day", get_report))
     app.add_handler(CommandHandler("report_week", get_report))
     app.add_handler(CommandHandler("report_month", get_report))
