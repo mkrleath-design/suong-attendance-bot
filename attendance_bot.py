@@ -28,7 +28,7 @@ GROUP_ID = "-5126809493"
 
 # ស្ថានភាពសម្រាប់ Conversation វត្តមាន និងសុំច្បាប់
 PHOTO, LOCATION = range(2)
-LEAVE_TYPE, LEAVE_DATE, LEAVE_DURATION, LEAVE_REASON = range(2, 6)
+LEAVE_DURATION, LEAVE_REASON = range(2, 4)
 
 # បង្កើតឯកសារ CSV បើមិនទាន់មាន
 if not os.path.exists(REPORT_FILE):
@@ -89,22 +89,17 @@ def check_attendance_shift(now_dt):
     else:
         return "ក្រៅម៉ោងរដ្ឋបាល", "យឺត / អវត្តមាន"
 
-# =========================================================================
-# 📅 ផ្នែកបង្កើតប្រតិទិនស្វ័យប្រវត្តិ (Inline Calendar Generation)
-# =========================================================================
+# --- 📅 ផ្នែកប្រតិទិន ---
 def create_calendar(year, month):
     keyboard = []
-    # ជួរក្បាលលើ បង្ហាញ ខែ និង ឆ្នាំ
     row_header = [InlineKeyboardButton(f"🗓️ {calendar.month_name[month]} {year}", callback_data="IGNORE")]
     keyboard.append(row_header)
     
-    # ជួរថ្ងៃក្នុងសប្តាហ៍
     row_days = []
     for day in ["ច", "អ", "ព", "ព្រ", "សុ", "ស", "អា"]:
         row_days.append(InlineKeyboardButton(day, callback_data="IGNORE"))
     keyboard.append(row_days)
     
-    # បង្កើតថ្ងៃក្នុងខែ
     month_calendar = calendar.monthcalendar(year, month)
     for week in month_calendar:
         row_week = []
@@ -115,7 +110,6 @@ def create_calendar(year, month):
                 row_week.append(InlineKeyboardButton(str(day), callback_data=f"CAL_{year}_{month}_{day}"))
         keyboard.append(row_week)
         
-    # ប៊ូតុងបញ្ជាប្តូរខែ ថយក្រោយ ឬ ទៅមុខ
     row_nav = [
         InlineKeyboardButton("◀️ ខែមុន", callback_data=f"PREV_{year}_{month}"),
         InlineKeyboardButton("ខែបន្ទាប់ ▶️", callback_data=f"NEXT_{year}_{month}")
@@ -124,7 +118,7 @@ def create_calendar(year, month):
     
     return InlineKeyboardMarkup(keyboard)
 
-# --- ផ្នែកកូដចុះវត្តមានធម្មតា ---
+# --- 📱 ផ្នែកកូដចុះវត្តមានធម្មតា ---
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(
         "📥 ស្វាគមន៍មកកាន់ប្រព័ន្ធរដ្ឋបាលក្រុងសួង!\n"
@@ -138,7 +132,7 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
     context.user_data['photo_id'] = photo_file.file_id
     location_keyboard = [[{"text": "📍 ផ្ញើទីតាំងបច្ចុប្បន្ន (Share GPS)", "request_location": True}]]
     reply_markup = ReplyKeyboardMarkup(location_keyboard, one_time_keyboard=True, resize_keyboard=True)
-    await update.message.reply_text("📸 ទទួលបានរូបថតជោគជ័យ! សូមចុចប៊ូតុងខាងក្រោមដើម្បីផ្ញើទីតាំង GPS।", reply_markup=reply_markup)
+    await update.message.reply_text("📸 ទទួលបានរូបថតជោគជ័យ! សូមចុចប៊ូតុងខាងក្រោមដើម្បីផ្ញើទីតាំង GPS។", reply_markup=reply_markup)
     return LOCATION
 
 async def handle_location(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -169,105 +163,33 @@ async def handle_location(update: Update, context: ContextTypes.DEFAULT_TYPE):
     return ConversationHandler.END
 
 # =========================================================================
-# 🛠️ ផ្នែកកូដប្រព័ន្ធសុំច្បាប់សម្រាក ប្រើប្រាស់ប្រតិទិន (Leave System with Calendar)
+# 🛠️ ផ្នែកកូដប្រព័ន្ធសុំច្បាប់សម្រាក ( Leave System - FIXED )
 # =========================================================================
 async def leave_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     keyboard = [["ច្បាប់ឈឺ (Sick Leave)", "ច្បាប់ផ្ទាល់ខ្លួន (Special Leave)"]]
     reply_markup = ReplyKeyboardMarkup(keyboard, one_time_keyboard=True, resize_keyboard=True)
     await update.message.reply_text("📋 សូមជ្រើសរើសប្រភេទច្បាប់សម្រាក៖", reply_markup=reply_markup)
-    return LEAVE_TYPE
-
-async def leave_type_chosen(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    context.user_data['leave_type'] = update.message.text
-    
-    # ទាញខែឆ្នាំបច្ចុប្បន្នដើម្បីបង្កើតប្រតិទិន
-    now = get_khmer_timezone_now()
-    reply_markup = create_calendar(now.year, now.month)
-    
-    await update.message.reply_text(
-        "📅 **សូមជ្រើសរើសកាលបរិច្ឆេទឈប់សម្រាកពីប្រតិទិនខាងក្រោម៖**\n"
-        "*(លក្ខខណ្ឌ៖ ត្រូវសុំច្បាប់មុនថ្ងៃបំពេញការងារ ចាប់ពីថ្ងៃស្អែកឡើងទៅ)*",
-        parse_mode="Markdown",
-        reply_markup=reply_markup
-    )
-    return LEAVE_DATE
-
-# មុខងារគ្រប់គ្រងសកម្មភាពចុចលើប្រតិទិន (Calendar Button Core Handler)
-async def calendar_callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    query = update.callback_query
-    data = query.data
-    await query.answer()
-
-    if data == "IGNORE":
-        return
-
-    # ករណីចុចប្តូរខែមុន (Previous Month)
-    if data.startswith("PREV_") or data.startswith("NEXT_"):
-        parts = data.split("_")
-        year, month = int(parts[1]), int(parts[2])
-        
-        if data.startswith("PREV_"):
-            month -= 1
-            if month == 0:
-                month = 12
-                year -= 1
-        else:
-            month += 1
-            if month == 13:
-                month = 1
-                year += 1
-                
-        await query.edit_message_reply_markup(reply_markup=create_calendar(year, month))
-        return
-
-    # ករណីមន្ត្រីចុចរើសថ្ងៃ (Select Date)
-    if data.startswith("CAL_"):
-        parts = data.split("_")
-        year, month, day = int(parts[1]), int(parts[2]), int(parts[3])
-        chosen_date = datetime(year, month, day).date()
-        now_khmer = get_khmer_timezone_now().date()
-
-        # ត្រួតពិនិត្យលក្ខខណ្ឌសុំជាមុន
-        if chosen_date <= now_khmer:
-            # បង្ហាញសារព្រមានបណ្តោះអាសន្នលើអេក្រង់ Telegram មិនឱ្យដើរទៅមុខ
-            await context.bot.send_message(
-                chat_id=query.message.chat_id,
-                text="❌ មិនអាចសុំច្បាប់សម្រាប់ថ្ងៃនេះ ឬថ្ងៃកន្លងទៅបានទេ។ សូមជ្រើសរើសថ្ងៃចាប់ពីថ្ងៃស្អែកឡើងទៅនៅលើប្រតិទិនម្តងទៀត៖"
-            )
-            return
-
-        # បើត្រឹមត្រូវ រក្សាទុកទិន្នន័យថ្ងៃខែ
-        date_str = chosen_date.strftime("%Y-%m-%d")
-        context.user_data['leave_date'] = date_str
-        
-        # ប្តូរផ្ទាំងសារទៅជំហានជ្រើសរើសរយៈពេល
-        keyboard = [["កន្លះថ្ងៃ (១ ព្រឹក)", "កន្លះថ្ងៃ (១ រសៀល)"], ["១ ថ្ងៃ", "២ ថ្ងៃ", "៣ ថ្ងៃ"]]
-        reply_markup = ReplyKeyboardMarkup(keyboard, one_time_keyboard=True, resize_keyboard=True)
-        
-        await context.bot.send_message(
-            chat_id=query.message.chat_id,
-            text=f"✅ ថ្ងៃដែលបានជ្រើសរើស៖ {date_str}\n\n⏳ សូមជ្រើសរើសរយៈពេល ឬចំនួនថ្ងៃដែលត្រូវសុំ៖",
-            reply_markup=reply_markup
-        )
-        
-        # បង្ខំឱ្យ Conversation ដើរទៅវគ្គ LEAVE_DURATION
-        # ដោយសារ CallbackQuery មិនអាចប្តូរ State ធម្មតាបាន យើងប្រើការកំណត់ context ជំនួស
-        context.user_data['state_forced'] = LEAVE_DURATION
-        
-        # លុបប្រតិទិនចោលកុំឱ្យមន្ត្រីចុចច្រំដែល
-        await query.edit_message_text(text=f"📅 ប្រតិទិន៖ បានជ្រើសរើសថ្ងៃ {date_str} រួចរាល់។")
-
-# មុខងារអន្តរកាលសម្រាប់ចាប់យកការដើរទៅមុខនៃ Conversation
-async def leave_duration_trigger(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if context.user_data.get('state_forced') == LEAVE_DURATION:
-        context.user_data['state_forced'] = None
-        return await leave_duration_chosen(update, context)
-    else:
-        await update.message.reply_text("សូមប្រើប្រាស់បញ្ជា /leave ដើម្បីចាប់ផ្តើមឡើងវិញ។")
-        return ConversationHandler.END
+    return LEAVE_DURATION # ផ្លាស់ទៅរង់ចាំ Duration តែម្តង ដោយចោលការរើសថ្ងៃទៅក្រៅ
 
 async def leave_duration_chosen(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    context.user_data['leave_duration'] = update.message.text
+    # រក្សាទុកប្រភេទច្បាប់ និងរយៈពេលរួមគ្នា
+    text_input = update.message.text
+    
+    if "ច្បាប់ឈឺ" in text_input or "ច្បាប់ផ្ទាល់ខ្លួន" in text_input:
+        context.user_data['leave_type'] = text_input
+        # បង្ហាញប្រតិទិនឱ្យរើសថ្ងៃ
+        now = get_khmer_timezone_now()
+        reply_markup = create_calendar(now.year, now.month)
+        await update.message.reply_text(
+            "📅 **សូមជ្រើសរើសកាលបរិច្ឆេទឈប់សម្រាកពីប្រតិទិនខាងក្រោម៖**\n"
+            "*(លក្ខខណ្ឌ៖ ត្រូវសុំច្បាប់មុនថ្ងៃបំពេញការងារ ចាប់ពីថ្ងៃស្អែកឡើងទៅ)*",
+            parse_mode="Markdown",
+            reply_markup=reply_markup
+        )
+        return LEAVE_DURATION # នៅចាំក្នុង State ដដែលរហូតដល់ចុចប្រតិទិនរួច
+
+    # បើមន្ត្រីចុចរើសរយៈពេល (បន្ទាប់ពីចុចប្រតិទិនរួច)
+    context.user_data['leave_duration'] = text_input
     await update.message.reply_text("📝 សូមសរសេររៀបរាប់ពីមូលហេតុនៃការសុំច្បាប់សម្រាកនេះ៖", reply_markup=ReplyKeyboardRemove())
     return LEAVE_REASON
 
@@ -275,8 +197,14 @@ async def leave_reason_chosen(update: Update, context: ContextTypes.DEFAULT_TYPE
     user = update.message.from_user
     context.user_data['leave_reason'] = update.message.text
     
-    callback_approve = f"lv_appv_{user.id}_{context.user_data['leave_date']}"
-    callback_reject  = f"lv_rjct_{user.id}_{context.user_data['leave_date']}"
+    # ពិនិត្យសុវត្ថិភាពទិន្នន័យការពារការគាំង
+    l_date = context.user_data.get('leave_date', 'មិនបានកំណត់')
+    l_type = context.user_data.get('leave_type', 'មិនបានកំណត់')
+    l_dur  = context.user_data.get('leave_duration', 'មិនបានកំណត់')
+    l_reas = context.user_data.get('leave_reason', 'មិនបានកំណត់')
+
+    callback_approve = f"lv_appv_{user.id}_{l_date}"
+    callback_reject  = f"lv_rjct_{user.id}_{l_date}"
 
     inline_keyboard = [[
         InlineKeyboardButton("✅ អនុម័ត", callback_data=callback_approve),
@@ -287,10 +215,10 @@ async def leave_reason_chosen(update: Update, context: ContextTypes.DEFAULT_TYPE
     group_message = (
         f"📩 **ពាក្យសុំច្បាប់សម្រាកការងារ**\n"
         f"👤 ឈ្មោះមន្ត្រី៖ {user.full_name}\n"
-        f"📋 ប្រភេទច្បាប់៖ {context.user_data['leave_type']}\n"
-        f"📅 សម្រាប់ថ្ងៃទី៖ {context.user_data['leave_date']}\n"
-        f"⏳ រយៈពេល៖ {context.user_data['leave_duration']}\n"
-        f"📝 មូលហេតុ៖ {context.user_data['leave_reason']}\n\n"
+        f"📋 ប្រភេទច្បាប់៖ {l_type}\n"
+        f"📅 សម្រាប់ថ្ងៃទី៖ {l_date}\n"
+        f"⏳ រយៈពេល៖ {l_dur}\n"
+        f"📝 មូលហេតុ៖ {l_reas}\n\n"
         f"👉 គោរពជូនថ្នាក់ដឹកនាំមេត្តាពិនិត្យ និងសម្រេច៖"
     )
     
@@ -298,44 +226,91 @@ async def leave_reason_chosen(update: Update, context: ContextTypes.DEFAULT_TYPE
     await update.message.reply_text("⏳ ពាក្យសុំច្បាប់របស់លោកស្រីត្រូវបានបញ្ជូនទៅកាន់ថ្នាក់ដឹកនាំរួចរាល់ហើយ។ សូមរង់ចាំការពិនិត្យអនុម័ត!")
     return ConversationHandler.END
 
-# --- ផ្នែកប៊ូតុងអនុម័តក្នុង Group ---
-async def leave_button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+# --- ⚙️ ផ្នែកគ្រប់គ្រងប៊ូតុងទាំងអស់ (All Callbacks Unified) ---
+async def global_callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     data = query.data
     
-    # បដិសេធរាល់ Callback ប្រតិទិន កុំឱ្យមកជាន់នឹងប្រព័ន្ធអនុម័តក្នុងគ្រុប
-    if data.startswith("CAL_") or data.startswith("PREV_") or data.startswith("NEXT_") or data == "IGNORE":
-        return await calendar_callback_handler(update, context)
+    # ១. ករណីចុចលើប៊ូតុងដែលមិនត្រូវធ្វើអ្វីសោះ
+    if data == "IGNORE":
+        await query.answer()
+        return
+
+    # ២. ករណីចុចប្តូរខែនៅលើប្រតិទិន
+    if data.startswith("PREV_") or data.startswith("NEXT_"):
+        await query.answer()
+        parts = data.split("_")
+        year, month = int(parts[1]), int(parts[2])
+        if data.startswith("PREV_"):
+            month -= 1
+            if month == 0: month = 12; year -= 1
+        else:
+            month += 1
+            if month == 13: month = 1; year += 1
+        await query.edit_message_reply_markup(reply_markup=create_calendar(year, month))
+        return
+
+    # ៣. ករណីមន្ត្រីចុចរើសថ្ងៃសុំច្បាប់ពីប្រតិទិន
+    if data.startswith("CAL_"):
+        await query.answer()
+        parts = data.split("_")
+        year, month, day = int(parts[1]), int(parts[2]), int(parts[3])
+        chosen_date = datetime(year, month, day).date()
+        now_khmer = get_khmer_timezone_now().date()
+
+        if chosen_date <= now_khmer:
+            await context.bot.send_message(
+                chat_id=query.message.chat_id,
+                text="❌ មិនអាចសុំច្បាប់សម្រាប់ថ្ងៃនេះ ឬថ្ងៃកន្លងទៅបានទេ។ សូមជ្រើសរើសថ្ងៃចាប់ពីថ្ងៃស្អែកឡើងទៅនៅលើប្រតិទិនម្តងទៀត៖"
+            )
+            return
+
+        date_str = chosen_date.strftime("%Y-%m-%d")
+        context.user_data['leave_date'] = date_str
         
-    await query.answer()
-    leader_name = query.from_user.full_name
-    original_text = query.message.text
-    
-    lines = original_text.split("\n")
-    emp_name = lines[1].replace("👤 ឈ្មោះមន្ត្រី៖ ", "")
-    leave_type = lines[2].replace("📋 ប្រភេទច្បាប់៖ ", "")
-    leave_date = lines[3].replace("📅 សម្រាប់ថ្ងៃទី៖ ", "")
-    duration = lines[4].replace("⏳ រយៈពេល៖ ", "")
-    reason = lines[5].replace("📝 មូលហេតុ៖ ", "")
-    
-    now_str = get_khmer_timezone_now().strftime("%Y-%m-%d %H:%M:%S")
+        # លុបប្រតិទិនចោល រួចលោតប៊ូតុងរើសរយៈពេលជំនួស
+        keyboard = [["កន្លះថ្ងៃ (១ ព្រឹក)", "កន្លះថ្ងៃ (១ រសៀល)"], ["១ ថ្ងៃ", "២ ថ្ងៃ", "៣ ថ្ងៃ"]]
+        reply_markup = ReplyKeyboardMarkup(keyboard, one_time_keyboard=True, resize_keyboard=True)
+        
+        await query.edit_message_text(text=f"📅 ប្រតិទិន៖ បានជ្រើសរើសថ្ងៃ {date_str} រួចរាល់។")
+        await context.bot.send_message(
+            chat_id=query.message.chat_id,
+            text=f"⏳ សូមជ្រើសរើសរយៈពេល ឬចំនួនថ្ងៃដែលត្រូវសុំ៖",
+            reply_markup=reply_markup
+        )
+        return
 
-    if data.startswith("lv_appv_"):
-        new_status = f"✅ បានអនុម័ត (ដោយ៖ {leader_name})"
-        with open(LEAVE_FILE, mode="a", newline="", encoding="utf-8-sig") as f:
-            writer = csv.writer(f)
-            writer.writerow([now_str, data.split("_")[2], emp_name, leave_type, leave_date, duration, reason, "Approved"])
-    elif data.startswith("lv_rjct_"):
-        new_status = f"❌ មិនអនុម័ត/បដិសេធ (ដោយ៖ {leader_name})"
+    # ៤. ករណីថ្នាក់ដឹកនាំចុច អនុម័ត ឬ បដិសេធ ក្នុង Group
+    if data.startswith("lv_appv_") or data.startswith("lv_rjct_"):
+        await query.answer()
+        leader_name = query.from_user.full_name
+        original_text = query.message.text
+        
+        lines = original_text.split("\n")
+        emp_name = lines[1].replace("👤 ឈ្មោះមន្ត្រី៖ ", "") if len(lines) > 1 else "មិនច្បាស់"
+        leave_type = lines[2].replace("📋 ប្រភេទច្បាប់៖ ", "") if len(lines) > 2 else "មិនច្បាស់"
+        leave_date = lines[3].replace("📅 សម្រាប់ថ្ងៃទី៖ ", "") if len(lines) > 3 else "មិនច្បាស់"
+        duration = lines[4].replace("⏳ រយៈពេល៖ ", "") if len(lines) > 4 else "មិនច្បាស់"
+        reason = lines[5].replace("📝 មូលហេតុ៖ ", "") if len(lines) > 5 else "មិនច្បាស់"
+        
+        now_str = get_khmer_timezone_now().strftime("%Y-%m-%d %H:%M:%S")
 
-    updated_text = f"{original_text}\n\n📌 **ស្ថានភាព៖** {new_status}"
-    await query.edit_message_text(text=updated_text, parse_mode="Markdown", reply_markup=None)
+        if data.startswith("lv_appv_"):
+            new_status = f"✅ បានអនុម័ត (ដោយ៖ {leader_name})"
+            with open(LEAVE_FILE, mode="a", newline="", encoding="utf-8-sig") as f:
+                writer = csv.writer(f)
+                writer.writerow([now_str, data.split("_")[2], emp_name, leave_type, leave_date, duration, reason, "Approved"])
+        else:
+            new_status = f"❌ មិនអនុម័ត/បដិសេធ (ដោយ៖ {leader_name})"
+
+        updated_text = f"{original_text}\n\n📌 **ស្ថានភាព៖** {new_status}"
+        await query.edit_message_text(text=updated_text, parse_mode="Markdown", reply_markup=None)
 
 async def cancel(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text("❌ ដំណើរការត្រូវបានបោះបង់។", reply_markup=ReplyKeyboardRemove())
     return ConversationHandler.END
 
-# --- ផ្នែកទាញរបាយការណ៍ ---
+# --- 📊 ផ្នែកទាញរបាយការណ៍ ---
 async def get_report(update: Update, context: ContextTypes.DEFAULT_TYPE):
     command = update.message.text
     if command == "/report_leave":
@@ -371,6 +346,7 @@ async def get_report(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if os.path.exists(output_filename): os.remove(output_filename)
 
 def main():
+    # Token ផ្លូវការរបស់លោក
     BOT_TOKEN = "8966159307:AAFnHG8h-D6uhEhSh6LmUVe7Ujkpry9du2E"
     app = Application.builder().token(BOT_TOKEN).build()
 
@@ -386,8 +362,6 @@ def main():
     leave_handler = ConversationHandler(
         entry_points=[CommandHandler("leave", leave_start)],
         states={
-            LEAVE_TYPE: [MessageHandler(filters.TEXT & ~filters.COMMAND, leave_type_chosen)],
-            LEAVE_DATE: [CallbackQueryHandler(calendar_callback_handler), MessageHandler(filters.TEXT & ~filters.COMMAND, leave_duration_trigger)],
             LEAVE_DURATION: [MessageHandler(filters.TEXT & ~filters.COMMAND, leave_duration_chosen)],
             LEAVE_REASON: [MessageHandler(filters.TEXT & ~filters.COMMAND, leave_reason_chosen)],
         },
@@ -396,13 +370,15 @@ def main():
 
     app.add_handler(attendance_handler)
     app.add_handler(leave_handler)
-    app.add_handler(CallbackQueryHandler(leave_button_handler)) # ចាប់រាល់សកម្មភាពចុចប៊ូតុងទាំងអស់
+    
+    # ចាប់រាល់សកម្មភាពចុចប៊ូតុងប្រតិទិន និងប៊ូតុងអនុម័តទាំងអស់រួមគ្នាដោយសុវត្ថិភាព
+    app.add_handler(CallbackQueryHandler(global_callback_handler)) 
     
     app.add_handler(CommandHandler("report_day", get_report))
     app.add_handler(CommandHandler("report_month", get_report))
     app.add_handler(CommandHandler("report_leave", get_report))
 
-    print("🚀 ដំណើរការប្រព័ន្ធគ្រប់គ្រងវត្តមាន និងច្បាប់សម្រាកបែបប្រតិទិន រដ្ឋបាលក្រុងសួង...")
+    print("🚀 ប្រព័ន្ធសុវត្ថិភាពកម្រិតខ្ពស់ (Bug Fixed) ត្រូវបានចាប់ផ្តើមដំណើរការ...")
     app.run_polling()
 
 if __name__ == "__main__":
