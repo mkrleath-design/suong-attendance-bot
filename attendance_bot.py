@@ -141,7 +141,7 @@ async def handle_location(update: Update, context: ContextTypes.DEFAULT_TYPE):
     distance = calculate_distance(user_loc.latitude, user_loc.longitude, OFFICE_LAT, OFFICE_LON)
     
     if distance > ALLOWED_RADIUS_M:
-        await update.message.reply_text(f"❌ មិនអាចចុះវត្តមានបានទេ! អ្នកស្ថិតនៅចម្ងាយ {int(distance)}ម ក្រៅតំបន់សាលាក្រុងសួង។", reply_markup=ReplyKeyboardRemove())
+        await update.message.reply_text(f"❌ មិនអាចចុះវត្តមានបានទេ! អ្នកស្ថិតនៅចម្ងាយ {int(distance)}ម ក្រៅតំបន់សាលាក្រុងសួង।", reply_markup=ReplyKeyboardRemove())
         return ConversationHandler.END
 
     attendance_type, status_time = check_attendance_shift(now)
@@ -163,21 +163,19 @@ async def handle_location(update: Update, context: ContextTypes.DEFAULT_TYPE):
     return ConversationHandler.END
 
 # =========================================================================
-# 🛠️ ផ្នែកកូដប្រព័ន្ធសុំច្បាប់សម្រាក ( Leave System - FIXED )
+# 🛠️ ផ្នែកកូដប្រព័ន្ធសុំច្បាប់សម្រាក
 # =========================================================================
 async def leave_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     keyboard = [["ច្បាប់ឈឺ (Sick Leave)", "ច្បាប់ផ្ទាល់ខ្លួន (Special Leave)"]]
     reply_markup = ReplyKeyboardMarkup(keyboard, one_time_keyboard=True, resize_keyboard=True)
     await update.message.reply_text("📋 សូមជ្រើសរើសប្រភេទច្បាប់សម្រាក៖", reply_markup=reply_markup)
-    return LEAVE_DURATION # ផ្លាស់ទៅរង់ចាំ Duration តែម្តង ដោយចោលការរើសថ្ងៃទៅក្រៅ
+    return LEAVE_DURATION
 
 async def leave_duration_chosen(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    # រក្សាទុកប្រភេទច្បាប់ និងរយៈពេលរួមគ្នា
     text_input = update.message.text
     
     if "ច្បាប់ឈឺ" in text_input or "ច្បាប់ផ្ទាល់ខ្លួន" in text_input:
         context.user_data['leave_type'] = text_input
-        # បង្ហាញប្រតិទិនឱ្យរើសថ្ងៃ
         now = get_khmer_timezone_now()
         reply_markup = create_calendar(now.year, now.month)
         await update.message.reply_text(
@@ -186,9 +184,8 @@ async def leave_duration_chosen(update: Update, context: ContextTypes.DEFAULT_TY
             parse_mode="Markdown",
             reply_markup=reply_markup
         )
-        return LEAVE_DURATION # នៅចាំក្នុង State ដដែលរហូតដល់ចុចប្រតិទិនរួច
+        return LEAVE_DURATION
 
-    # បើមន្ត្រីចុចរើសរយៈពេល (បន្ទាប់ពីចុចប្រតិទិនរួច)
     context.user_data['leave_duration'] = text_input
     await update.message.reply_text("📝 សូមសរសេររៀបរាប់ពីមូលហេតុនៃការសុំច្បាប់សម្រាកនេះ៖", reply_markup=ReplyKeyboardRemove())
     return LEAVE_REASON
@@ -197,12 +194,12 @@ async def leave_reason_chosen(update: Update, context: ContextTypes.DEFAULT_TYPE
     user = update.message.from_user
     context.user_data['leave_reason'] = update.message.text
     
-    # ពិនិត្យសុវត្ថិភាពទិន្នន័យការពារការគាំង
     l_date = context.user_data.get('leave_date', 'មិនបានកំណត់')
     l_type = context.user_data.get('leave_type', 'មិនបានកំណត់')
     l_dur  = context.user_data.get('leave_duration', 'មិនបានកំណត់')
     l_reas = context.user_data.get('leave_reason', 'មិនបានកំណត់')
 
+    # បង្កើតកូដសម្គាល់ដែលមានភ្ជាប់ ID របស់មន្ត្រីសាមីខ្លួន (user.id) ទៅជាមួយ
     callback_approve = f"lv_appv_{user.id}_{l_date}"
     callback_reject  = f"lv_rjct_{user.id}_{l_date}"
 
@@ -231,12 +228,10 @@ async def global_callback_handler(update: Update, context: ContextTypes.DEFAULT_
     query = update.callback_query
     data = query.data
     
-    # ១. ករណីចុចលើប៊ូតុងដែលមិនត្រូវធ្វើអ្វីសោះ
     if data == "IGNORE":
         await query.answer()
         return
 
-    # ២. ករណីចុចប្តូរខែនៅលើប្រតិទិន
     if data.startswith("PREV_") or data.startswith("NEXT_"):
         await query.answer()
         parts = data.split("_")
@@ -250,7 +245,6 @@ async def global_callback_handler(update: Update, context: ContextTypes.DEFAULT_
         await query.edit_message_reply_markup(reply_markup=create_calendar(year, month))
         return
 
-    # ៣. ករណីមន្ត្រីចុចរើសថ្ងៃសុំច្បាប់ពីប្រតិទិន
     if data.startswith("CAL_"):
         await query.answer()
         parts = data.split("_")
@@ -268,7 +262,6 @@ async def global_callback_handler(update: Update, context: ContextTypes.DEFAULT_
         date_str = chosen_date.strftime("%Y-%m-%d")
         context.user_data['leave_date'] = date_str
         
-        # លុបប្រតិទិនចោល រួចលោតប៊ូតុងរើសរយៈពេលជំនួស
         keyboard = [["កន្លះថ្ងៃ (១ ព្រឹក)", "កន្លះថ្ងៃ (១ រសៀល)"], ["១ ថ្ងៃ", "២ ថ្ងៃ", "៣ ថ្ងៃ"]]
         reply_markup = ReplyKeyboardMarkup(keyboard, one_time_keyboard=True, resize_keyboard=True)
         
@@ -280,11 +273,14 @@ async def global_callback_handler(update: Update, context: ContextTypes.DEFAULT_
         )
         return
 
-    # ៤. ករណីថ្នាក់ដឹកនាំចុច អនុម័ត ឬ បដិសេធ ក្នុង Group
+    # ៤. ករណីថ្នាក់ដឹកនាំចុច អនុម័ត ឬ បដិសេធ ក្នុង Group (កែប្រែថ្មីដើម្បីផ្ញើសារទៅសាមីខ្លួន)
     if data.startswith("lv_appv_") or data.startswith("lv_rjct_"):
         await query.answer()
         leader_name = query.from_user.full_name
         original_text = query.message.text
+        
+        parts = data.split("_")
+        officer_id = int(parts[2])  # ទាញយក ID របស់មន្ត្រីសាមីខ្លួនពី callback_data
         
         lines = original_text.split("\n")
         emp_name = lines[1].replace("👤 ឈ្មោះមន្ត្រី៖ ", "") if len(lines) > 1 else "មិនច្បាស់"
@@ -297,14 +293,24 @@ async def global_callback_handler(update: Update, context: ContextTypes.DEFAULT_
 
         if data.startswith("lv_appv_"):
             new_status = f"✅ បានអនុម័ត (ដោយ៖ {leader_name})"
+            user_notify_msg = f"🔔 **ដំណឹងពីការសុំច្បាប់សម្រាក៖**\n\nលោក/លោកស្រី **{emp_name}** ទទួលបានការ **«អនុម័ត ✅»** លើពាក្យសុំច្បាប់សម្រាកថ្ងៃទី `{leave_date}` ({duration}) ពីថ្នាក់ដឹកនាំរួចរាល់ហើយបាទ។"
+            
             with open(LEAVE_FILE, mode="a", newline="", encoding="utf-8-sig") as f:
                 writer = csv.writer(f)
-                writer.writerow([now_str, data.split("_")[2], emp_name, leave_type, leave_date, duration, reason, "Approved"])
+                writer.writerow([now_str, officer_id, emp_name, leave_type, leave_date, duration, reason, "Approved"])
         else:
             new_status = f"❌ មិនអនុម័ត/បដិសេធ (ដោយ៖ {leader_name})"
+            user_notify_msg = f"🔔 **ដំណឹងពីការសុំច្បាប់សម្រាក៖**\n\nសុំទោសលោក/លោកស្រី **{emp_name}** ពាក្យសុំច្បាប់សម្រាកថ្ងៃទី `{leave_date}` ត្រូវបានថ្នាក់ដឹកនាំសម្រេច **«បដិសេធ ❌»**។"
 
+        # ១. កែប្រែផ្ទាំងសារនៅក្នុងគ្រុបថ្នាក់ដឹកនាំ
         updated_text = f"{original_text}\n\n📌 **ស្ថានភាព៖** {new_status}"
         await query.edit_message_text(text=updated_text, parse_mode="Markdown", reply_markup=None)
+        
+        # ២. ផ្ញើសារស្វ័យប្រវត្តិទៅកាន់ប្រអប់សារ Chat ផ្ទាល់ខ្លួនរបស់មន្ត្រីសាមីខ្លួន
+        try:
+            await context.bot.send_message(chat_id=officer_id, text=user_notify_msg, parse_mode="Markdown")
+        except Exception as e:
+            print(f"មិនអាចផ្ញើសារទៅមន្ត្រីបានទេ (ដោយសារគាត់មិនទាន់បានចុច Start Bot ផ្ទាល់ខ្លួន)៖ {e}")
 
 async def cancel(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text("❌ ដំណើរការត្រូវបានបោះបង់។", reply_markup=ReplyKeyboardRemove())
@@ -346,7 +352,6 @@ async def get_report(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if os.path.exists(output_filename): os.remove(output_filename)
 
 def main():
-    # Token ផ្លូវការរបស់លោក
     BOT_TOKEN = "8966159307:AAFnHG8h-D6uhEhSh6LmUVe7Ujkpry9du2E"
     app = Application.builder().token(BOT_TOKEN).build()
 
@@ -370,15 +375,13 @@ def main():
 
     app.add_handler(attendance_handler)
     app.add_handler(leave_handler)
-    
-    # ចាប់រាល់សកម្មភាពចុចប៊ូតុងប្រតិទិន និងប៊ូតុងអនុម័តទាំងអស់រួមគ្នាដោយសុវត្ថិភាព
     app.add_handler(CallbackQueryHandler(global_callback_handler)) 
     
     app.add_handler(CommandHandler("report_day", get_report))
     app.add_handler(CommandHandler("report_month", get_report))
     app.add_handler(CommandHandler("report_leave", get_report))
 
-    print("🚀 ប្រព័ន្ធសុវត្ថិភាពកម្រិតខ្ពស់ (Bug Fixed) ត្រូវបានចាប់ផ្តើមដំណើរការ...")
+    print("🚀 កំពុងដំណើរការប្រព័ន្ធគ្រប់គ្រងវត្តមាន-ច្បាប់សម្រាក ជំនាន់ជូនដំណឹងសាមីខ្លួន...")
     app.run_polling()
 
 if __name__ == "__main__":
