@@ -1,8 +1,10 @@
 import os
 import csv
 import calendar
-from datetime import datetime, timedelta
+from datetime import datetime
 import pytz
+from threading import Thread
+from flask import Flask
 from telegram import Update, ReplyKeyboardMarkup, ReplyKeyboardRemove, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import (
     Application,
@@ -14,23 +16,38 @@ from telegram.ext import (
     filters,
 )
 
-# កំណត់ទីតាំងសាលាក្រុងសួង
+# =========================================================================
+# 🌐 ផ្នែកបង្កើត Web Server តូចមួយសម្រាប់ដាស់ Bot (Flask Web Server)
+# =========================================================================
+web_app = Flask('')
+
+@web_app.route('/')
+def home():
+    return "Bot របស់រដ្ឋបាលក្រុងសួង កំពុងដំណើរការយ៉ាងសកម្ម (Active)!"
+
+def run_web_server():
+    # Render តម្រូវឱ្យប្រើ Port 10000 សម្រាប់គម្រោង Free Web Service
+    port = int(os.environ.get("PORT", 10000))
+    web_app.run(host='0.0.0.0', port=port)
+
+def keep_alive():
+    t = Thread(target=run_web_server)
+    t.start()
+
+# =========================================================================
+# ⚙️ ផ្នែកកំណត់ទិន្នន័យ Bot ធម្មតា
+# =========================================================================
 OFFICE_LAT = 11.9167
 OFFICE_LON = 105.6667
 ALLOWED_RADIUS_M = 150
 
-# ឈ្មោះឯកសាររក្សាទុកទិន្នន័យ
 REPORT_FILE = "attendance_records.csv"
 LEAVE_FILE = "leave_records.csv"
-
-# ID ក្រុមរបស់លោក (សូមប្តូរឱ្យត្រូវនឹង Group របស់លោកពិតប្រាកដ)
 GROUP_ID = "-5126809493" 
 
-# ស្ថានភាពសម្រាប់ Conversation វត្តមាន និងសុំច្បាប់
 PHOTO, LOCATION = range(2)
 LEAVE_DURATION, LEAVE_REASON = range(2, 4)
 
-# បង្កើតឯកសារ CSV បើមិនទាន់មាន
 if not os.path.exists(REPORT_FILE):
     with open(REPORT_FILE, mode="w", newline="", encoding="utf-8-sig") as f:
         writer = csv.writer(f)
@@ -89,7 +106,6 @@ def check_attendance_shift(now_dt):
     else:
         return "ក្រៅម៉ោងរដ្ឋបាល", "យឺត / អវត្តមាន"
 
-# --- 📅 ផ្នែកប្រតិទិន ---
 def create_calendar(year, month):
     keyboard = []
     row_header = [InlineKeyboardButton(f"🗓️ {calendar.month_name[month]} {year}", callback_data="IGNORE")]
@@ -118,7 +134,6 @@ def create_calendar(year, month):
     
     return InlineKeyboardMarkup(keyboard)
 
-# --- 📱 ផ្នែកកូដចុះវត្តមានធម្មតា ---
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(
         "📥 ស្វាគមន៍មកកាន់ប្រព័ន្ធរដ្ឋបាលក្រុងសួង!\n"
@@ -162,9 +177,6 @@ async def handle_location(update: Update, context: ContextTypes.DEFAULT_TYPE):
         print(f"Error: {e}")
     return ConversationHandler.END
 
-# =========================================================================
-# 🛠️ ផ្នែកកូដប្រព័ន្ធសុំច្បាប់សម្រាក
-# =========================================================================
 async def leave_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     keyboard = [["ច្បាប់ឈឺ (Sick Leave)", "ច្បាប់ផ្ទាល់ខ្លួន (Special Leave)"]]
     reply_markup = ReplyKeyboardMarkup(keyboard, one_time_keyboard=True, resize_keyboard=True)
@@ -199,7 +211,6 @@ async def leave_reason_chosen(update: Update, context: ContextTypes.DEFAULT_TYPE
     l_dur  = context.user_data.get('leave_duration', 'មិនបានកំណត់')
     l_reas = context.user_data.get('leave_reason', 'មិនបានកំណត់')
 
-    # បង្កើតកូដសម្គាល់ដែលមានភ្ជាប់ ID របស់មន្ត្រីសាមីខ្លួន (user.id) ទៅជាមួយ
     callback_approve = f"lv_appv_{user.id}_{l_date}"
     callback_reject  = f"lv_rjct_{user.id}_{l_date}"
 
@@ -223,7 +234,6 @@ async def leave_reason_chosen(update: Update, context: ContextTypes.DEFAULT_TYPE
     await update.message.reply_text("⏳ ពាក្យសុំច្បាប់របស់លោកស្រីត្រូវបានបញ្ជូនទៅកាន់ថ្នាក់ដឹកនាំរួចរាល់ហើយ។ សូមរង់ចាំការពិនិត្យអនុម័ត!")
     return ConversationHandler.END
 
-# --- ⚙️ ផ្នែកគ្រប់គ្រងប៊ូតុងទាំងអស់ (All Callbacks Unified) ---
 async def global_callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     data = query.data
@@ -273,14 +283,13 @@ async def global_callback_handler(update: Update, context: ContextTypes.DEFAULT_
         )
         return
 
-    # ៤. ករណីថ្នាក់ដឹកនាំចុច អនុម័ត ឬ បដិសេធ ក្នុង Group (កែប្រែថ្មីដើម្បីផ្ញើសារទៅសាមីខ្លួន)
     if data.startswith("lv_appv_") or data.startswith("lv_rjct_"):
         await query.answer()
         leader_name = query.from_user.full_name
         original_text = query.message.text
         
         parts = data.split("_")
-        officer_id = int(parts[2])  # ទាញយក ID របស់មន្ត្រីសាមីខ្លួនពី callback_data
+        officer_id = int(parts[2])
         
         lines = original_text.split("\n")
         emp_name = lines[1].replace("👤 ឈ្មោះមន្ត្រី៖ ", "") if len(lines) > 1 else "មិនច្បាស់"
@@ -294,7 +303,6 @@ async def global_callback_handler(update: Update, context: ContextTypes.DEFAULT_
         if data.startswith("lv_appv_"):
             new_status = f"✅ បានអនុម័ត (ដោយ៖ {leader_name})"
             user_notify_msg = f"🔔 **ដំណឹងពីការសុំច្បាប់សម្រាក៖**\n\nលោក/លោកស្រី **{emp_name}** ទទួលបានការ **«អនុម័ត ✅»** លើពាក្យសុំច្បាប់សម្រាកថ្ងៃទី `{leave_date}` ({duration}) ពីថ្នាក់ដឹកនាំរួចរាល់ហើយបាទ។"
-            
             with open(LEAVE_FILE, mode="a", newline="", encoding="utf-8-sig") as f:
                 writer = csv.writer(f)
                 writer.writerow([now_str, officer_id, emp_name, leave_type, leave_date, duration, reason, "Approved"])
@@ -302,21 +310,18 @@ async def global_callback_handler(update: Update, context: ContextTypes.DEFAULT_
             new_status = f"❌ មិនអនុម័ត/បដិសេធ (ដោយ៖ {leader_name})"
             user_notify_msg = f"🔔 **ដំណឹងពីការសុំច្បាប់សម្រាក៖**\n\nសុំទោសលោក/លោកស្រី **{emp_name}** ពាក្យសុំច្បាប់សម្រាកថ្ងៃទី `{leave_date}` ត្រូវបានថ្នាក់ដឹកនាំសម្រេច **«បដិសេធ ❌»**។"
 
-        # ១. កែប្រែផ្ទាំងសារនៅក្នុងគ្រុបថ្នាក់ដឹកនាំ
         updated_text = f"{original_text}\n\n📌 **ស្ថានភាព៖** {new_status}"
         await query.edit_message_text(text=updated_text, parse_mode="Markdown", reply_markup=None)
         
-        # ២. ផ្ញើសារស្វ័យប្រវត្តិទៅកាន់ប្រអប់សារ Chat ផ្ទាល់ខ្លួនរបស់មន្ត្រីសាមីខ្លួន
         try:
             await context.bot.send_message(chat_id=officer_id, text=user_notify_msg, parse_mode="Markdown")
         except Exception as e:
-            print(f"មិនអាចផ្ញើសារទៅមន្ត្រីបានទេ (ដោយសារគាត់មិនទាន់បានចុច Start Bot ផ្ទាល់ខ្លួន)៖ {e}")
+            print(f"Error notifying user: {e}")
 
 async def cancel(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text("❌ ដំណើរការត្រូវបានបោះបង់។", reply_markup=ReplyKeyboardRemove())
     return ConversationHandler.END
 
-# --- 📊 ផ្នែកទាញរបាយការណ៍ ---
 async def get_report(update: Update, context: ContextTypes.DEFAULT_TYPE):
     command = update.message.text
     if command == "/report_leave":
@@ -352,6 +357,9 @@ async def get_report(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if os.path.exists(output_filename): os.remove(output_filename)
 
 def main():
+    # ចាប់ផ្តើមដំណើរការ Web Server សម្រាប់ដាស់ Bot ជាមុន
+    keep_alive()
+
     BOT_TOKEN = "8966159307:AAFnHG8h-D6uhEhSh6LmUVe7Ujkpry9du2E"
     app = Application.builder().token(BOT_TOKEN).build()
 
@@ -381,7 +389,7 @@ def main():
     app.add_handler(CommandHandler("report_month", get_report))
     app.add_handler(CommandHandler("report_leave", get_report))
 
-    print("🚀 កំពុងដំណើរការប្រព័ន្ធគ្រប់គ្រងវត្តមាន-ច្បាប់សម្រាក ជំនាន់ជូនដំណឹងសាមីខ្លួន...")
+    print("🚀 កំពុងដំណើរការប្រព័ន្ធគ្រប់គ្រងវត្តមាន រួមជាមួយ Web Server ដាស់ស្វ័យប្រវត្ត...")
     app.run_polling()
 
 if __name__ == "__main__":
