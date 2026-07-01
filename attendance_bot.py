@@ -17,7 +17,7 @@ from telegram.ext import (
 )
 
 # =========================================================================
-# ⚙️ ទាញយកតម្លៃ Token និង URL ពី Render Environment (ការពារការកូដរឹង)
+# ⚙️ ទាញយកតម្លៃ Token និង URL ពី Render Environment (ឬប្រើ Default បើគ្មាន)
 # =========================================================================
 BOT_TOKEN = os.environ.get("BOT_TOKEN", "8966159307:AAFnHG8h-D6uhEhSh6LmUVe7Ujkpry9du2E")
 RENDER_URL = os.environ.get("RENDER_EXTERNAL_URL", "https://suong-attendance-bot.onrender.com")
@@ -28,7 +28,7 @@ ALLOWED_RADIUS_M = 150
 
 REPORT_FILE = "attendance_records.csv"
 LEAVE_FILE = "leave_records.csv"
-GROUP_ID = "-5126809493" 
+GROUP_ID = "-4756534568" 
 
 PHOTO, LOCATION = range(2)
 LEAVE_DURATION, LEAVE_REASON = range(2, 4)
@@ -43,7 +43,7 @@ def get_khmer_timezone_now(): return datetime.now(pytz.timezone('Asia/Phnom_Penh
 
 def get_khmer_season_info(dt):
     month = dt.month
-    return ("រដូវវស្សា" if 5 <= month <= 10 else "រដូវប្រាំង", f"ត្រីមាសទី{(month-1)//3 + 1}", "ឆមាសទី១" if month <= 6 else "ឆមាសទី២")
+    return ("រដូវវស្សา" if 5 <= month <= 10 else "រដូវប្រាំង", f"ត្រីមាសទី{(month-1)//3 + 1}", "ឆមាសទី១" if month <= 6 else "ឆមាសទី២")
 
 def calculate_distance(lat1, lon1, lat2, lon2):
     from math import radians, cos, sin, asin, sqrt
@@ -88,7 +88,7 @@ async def handle_location(update: Update, context: ContextTypes.DEFAULT_TYPE):
     now = get_khmer_timezone_now()
     distance = calculate_distance(user_loc.latitude, user_loc.longitude, OFFICE_LAT, OFFICE_LON)
     if distance > ALLOWED_RADIUS_M:
-        await update.message.reply_text(f"❌ មិនអាចចុះវត្តមានបានទេ! អ្នកស្ថិតនៅចម្ងាយ {int(distance)}ម ក្រៅតំបន់សាលាក្រុងសួង biographies។", reply_markup=ReplyKeyboardRemove())
+        await update.message.reply_text(f"❌ មិនអាចចុះវត្តមានបានទេ! អ្នកស្ថិតនៅចម្ងាយ {int(distance)}ម ក្រៅតំបន់សាលាក្រុងសួង។", reply_markup=ReplyKeyboardRemove())
         return ConversationHandler.END
     att_type, status_time = check_attendance_shift(now)
     season, quarter, semester = get_khmer_season_info(now)
@@ -156,50 +156,39 @@ async def cancel(update: Update, context: ContextTypes.DEFAULT_TYPE):
     return ConversationHandler.END
 
 # =========================================================================
-# 🌐 ផ្នែក Web Server (Flask) រួមបញ្ចូលជាមួយ Webhook ផ្លូវការ
+# 🌐 ផ្នែក Web Server (Flask) រួមបញ្ចូលជាមួយ Webhook ផ្លូវការ (បោះបង់ Polling)
 # =========================================================================
 web_app = Flask('')
-telegram_app = None
+telegram_app = Application.builder().token(BOT_TOKEN).build()
+
+# បន្ថែម Handler ទៅក្នុងប្រព័ន្ធរៀបចំកូដ
+telegram_app.add_handler(ConversationHandler(entry_points=[CommandHandler("start", start)], states={PHOTO: [MessageHandler(filters.PHOTO, handle_photo)], LOCATION: [MessageHandler(filters.LOCATION, handle_location)]}, fallbacks=[CommandHandler("cancel", cancel)]))
+telegram_app.add_handler(ConversationHandler(entry_points=[CommandHandler("leave", leave_start)], states={LEAVE_DURATION: [MessageHandler(filters.TEXT & ~filters.COMMAND, leave_duration_chosen)], LEAVE_REASON: [MessageHandler(filters.TEXT & ~filters.COMMAND, leave_reason_chosen)]}, fallbacks=[CommandHandler("cancel", cancel)]))
+telegram_app.add_handler(CallbackQueryHandler(global_callback_handler))
 
 @web_app.route('/')
-def home(): return "Bot របស់រដ្ឋបាលក្រុងសួង កំពុងដំណើរការតាម Webhook ស្តង់ដារ!"
+def home(): 
+    return "Bot របស់រដ្ឋបាលក្រុងសួង កំពុងដំណើរការយ៉ាងរលូន!"
 
 @web_app.route('/webhook', methods=['POST'])
 def webhook():
-    global telegram_app
-    if telegram_app and request.headers.get('content-type') == 'application/json':
-        try:
-            loop = asyncio.get_event_loop()
-        except RuntimeError:
-            loop = asyncio.new_event_loop()
-            asyncio.set_event_loop(loop)
-        
-        update = Update.de_json(request.get_json(force=True), telegram_app.bot)
-        loop.run_until_complete(telegram_app.process_update(update))
+    # ប្រើប្រាស់ loop ចម្បងរបស់ Flask ផ្ទាល់ដើម្បីបញ្ជូនព័ត៌មានទៅ Telegram
+    update = Update.de_json(request.get_json(force=True), telegram_app.bot)
+    asyncio.run(telegram_app.process_update(update))
     return "OK", 200
 
-def init_telegram():
-    global telegram_app
-    if not BOT_TOKEN:
-        print("❌ កំហុស៖ រកមិនឃើញ BOT_TOKEN ឡើយ!")
-        return
-        
-    telegram_app = Application.builder().token(BOT_TOKEN).build()
+# មុខងារកំណត់រៀបចំ Webhook ដំបូងបង្អស់ពេលបើកម៉ាស៊ីន
+def set_webhook_init():
+    async def _init():
+        await telegram_app.initialize()
+        await telegram_app.bot.set_webhook(url=f"{RENDER_URL}/webhook")
+        print("🚀 Webhook បានភ្ជាប់ទៅ Telegram រួចរាល់!")
     
-    telegram_app.add_handler(ConversationHandler(entry_points=[CommandHandler("start", start)], states={PHOTO: [MessageHandler(filters.PHOTO, handle_photo)], LOCATION: [MessageHandler(filters.LOCATION, handle_location)]}, fallbacks=[CommandHandler("cancel", cancel)]))
-    telegram_app.add_handler(ConversationHandler(entry_points=[CommandHandler("leave", leave_start)], states={LEAVE_DURATION: [MessageHandler(filters.TEXT & ~filters.COMMAND, leave_duration_chosen)], LEAVE_REASON: [MessageHandler(filters.TEXT & ~filters.COMMAND, leave_reason_chosen)]}, fallbacks=[CommandHandler("cancel", cancel)]))
-    telegram_app.add_handler(CallbackQueryHandler(global_callback_handler))
-
     try:
-        loop = asyncio.get_event_loop()
-    except RuntimeError:
-        loop = asyncio.new_event_loop()
-        asyncio.set_event_loop(loop)
-        
-    loop.run_until_complete(telegram_app.initialize())
-    loop.run_until_complete(telegram_app.bot.set_webhook(url=f"{RENDER_URL}/webhook"))
-    print(f"🚀 Webhook បានភ្ជាប់ទៅកាន់ URL: {RENDER_URL}/webhook")
+        asyncio.run(_init())
+    except Exception as e:
+        print(f"⚠️ សម្គាល់ការដំឡើង៖ {e}")
 
 if __name__ == "__main__":
-    init_telegram()
+    set_webhook_init()
     web_app.run(host='0.0.0.0', port=int(os.environ.get("PORT", 10000)))
