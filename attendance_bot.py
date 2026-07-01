@@ -17,39 +17,30 @@ from telegram.ext import (
 )
 
 # =========================================================================
-# 🌐 ផ្នែកបង្កើត Web Server តូចមួយសម្រាប់ដាស់ Bot (Flask Web Server)
+# 🌐 ផ្នែក Web Server (Flask) - កែប្រែឱ្យរត់ជាចម្បងដើម្បីកុំឱ្យ Render ទាត់ចោល
 # =========================================================================
 web_app = Flask('')
 
 @web_app.route('/')
 def home():
-    return "Bot របស់រដ្ឋបាលក្រុងសួង កំពុងដំណើរការយ៉ាងសកម្ម (Active)!"
+    return "Bot របស់រដ្ឋបាលក្រុងសួង ដំណើរការជោគជ័យ និងកំពុងរង់ចាំការ Ping!"
 
 def run_web_server():
-    # Render តម្រូវឱ្យប្រើ Port 10000 សម្រាប់គម្រោង Free Web Service
     port = int(os.environ.get("PORT", 10000))
+    # រត់ Flask លើ Port 10000 ផ្លូវការរបស់ Render
     web_app.run(host='0.0.0.0', port=port)
 
-def keep_alive():
-    t = Thread(target=run_web_server)
-    t.start()
-
 # =========================================================================
-# ⚙️ ផ្នែកកំណត់ទិន្នន័យ Bot ធម្មតា
+# ⚙️ ផ្នែកកំណត់ទិន្នន័យទូទៅរបស់ Bot
 # =========================================================================
-# កំណត់ទីតាំងសាលាក្រុងសួង
 OFFICE_LAT = 11.9167
 OFFICE_LON = 105.6667
 ALLOWED_RADIUS_M = 150
 
-# ឈ្មោះឯកសាររក្សាទុកទិន្នន័យ
 REPORT_FILE = "attendance_records.csv"
 LEAVE_FILE = "leave_records.csv"
-
-# ID ក្រុមរបស់លោក (សូមប្តូរឱ្យត្រូវនឹង Group របស់លោកពិតប្រាកដ)
 GROUP_ID = "-5126809493" 
 
-# ស្ថានភាពសម្រាប់ Conversation វត្តមាន និងសុំច្បាប់
 PHOTO, LOCATION = range(2)
 LEAVE_DURATION, LEAVE_REASON = range(2, 4)
 
@@ -78,7 +69,7 @@ def calculate_distance(lat1, lon1, lat2, lon2):
     from math import radians, cos, sin, asin, sqrt
     lat1, lon1, lat2, lon2 = map(radians, [lat1, lon1, lat2, lon2])
     dlat = lat2 - lat1
-    dlon = dlon1 = lon2 - lon1
+    dlon = lon2 - lon1
     a = sin(dlat/2)**2 + cos(lat1) * cos(lat2) * sin(dlon/2)**2
     c = 2 * asin(sqrt(a))
     return c * 6371000
@@ -112,7 +103,7 @@ def check_attendance_shift(now_dt):
     else:
         return "ក្រៅម៉ោងរដ្ឋបាល", "យឺត / អវត្តមាន"
 
-# --- 📅 ផ្នែកបង្កើតប្រតិទិនចុចរើសថ្ងៃ ---
+# --- 📅 ប្រព័ន្ធប្រតិទិន ---
 def create_calendar(year, month):
     keyboard = []
     row_header = [InlineKeyboardButton(f"🗓️ {calendar.month_name[month]} {year}", callback_data="IGNORE")]
@@ -141,7 +132,7 @@ def create_calendar(year, month):
     
     return InlineKeyboardMarkup(keyboard)
 
-# --- 📱 ផ្នែកកូដចុះវត្តមានធម្មតា ---
+# --- 📱 មុខងារចុះវត្តមាន និងសុំច្បាប់ ---
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(
         "📥 ស្វាគមន៍មកកាន់ប្រព័ន្ធរដ្ឋបាលក្រុងសួង!\n"
@@ -185,9 +176,6 @@ async def handle_location(update: Update, context: ContextTypes.DEFAULT_TYPE):
         print(f"Error: {e}")
     return ConversationHandler.END
 
-# =========================================================================
-# 🛠️ ផ្នែកកូដប្រព័ន្ធសុំច្បាប់សម្រាក
-# =========================================================================
 async def leave_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     keyboard = [["ច្បាប់ឈឺ (Sick Leave)", "ច្បាប់ផ្ទាល់ខ្លួន (Special Leave)"]]
     reply_markup = ReplyKeyboardMarkup(keyboard, one_time_keyboard=True, resize_keyboard=True)
@@ -196,7 +184,6 @@ async def leave_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def leave_duration_chosen(update: Update, context: ContextTypes.DEFAULT_TYPE):
     text_input = update.message.text
-    
     if "ច្បាប់ឈឺ" in text_input or "ច្បាប់ផ្ទាល់ខ្លួន" in text_input:
         context.user_data['leave_type'] = text_input
         now = get_khmer_timezone_now()
@@ -208,7 +195,6 @@ async def leave_duration_chosen(update: Update, context: ContextTypes.DEFAULT_TY
             reply_markup=reply_markup
         )
         return LEAVE_DURATION
-
     context.user_data['leave_duration'] = text_input
     await update.message.reply_text("📝 សូមសរសេររៀបរាប់ពីមូលហេតុនៃការសុំច្បាប់សម្រាកនេះ៖", reply_markup=ReplyKeyboardRemove())
     return LEAVE_REASON
@@ -245,7 +231,6 @@ async def leave_reason_chosen(update: Update, context: ContextTypes.DEFAULT_TYPE
     await update.message.reply_text("⏳ ពាក្យសុំច្បាប់របស់លោកស្រីត្រូវបានបញ្ជូនទៅកាន់ថ្នាក់ដឹកនាំរួចរាល់ហើយ។ សូមរង់ចាំការពិនិត្យអនុម័ត!")
     return ConversationHandler.END
 
-# --- ⚙️ ផ្នែកគ្រប់គ្រងប៊ូតុងទាំងអស់ (All Callbacks Unified) ---
 async def global_callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     data = query.data
@@ -299,7 +284,6 @@ async def global_callback_handler(update: Update, context: ContextTypes.DEFAULT_
         await query.answer()
         leader_name = query.from_user.full_name
         original_text = query.message.text
-        
         parts = data.split("_")
         officer_id = int(parts[2])
         
@@ -314,7 +298,7 @@ async def global_callback_handler(update: Update, context: ContextTypes.DEFAULT_
 
         if data.startswith("lv_appv_"):
             new_status = f"✅ បានអនុម័ត (ដោយ៖ {leader_name})"
-            user_notify_msg = f"🔔 **ដំណឹងពីការសុំច្បាប់សម្រាក៖**\n\nលោក/លោកស្រី **{emp_name}** ទទួលបានការ **«អនុម័ត ✅»** លើពាក្យសុំច្បាប់សម្រាកថ្ងៃទី `{leave_date}` ({duration}) ពីថ្នាក់ដឹកនាំរួចរាល់ហើយបាទ។"
+            user_notify_msg = f"🔔 **🔑ដំណឹងពីការសុំច្បាប់សម្រាក៖**\n\nលោក/លោកស្រី **{emp_name}** ទទួលបានការ **«អនុម័ត ✅»** លើពាក្យសុំច្បាប់សម្រាកថ្ងៃទី `{leave_date}` ({duration}) ពីថ្នាក់ដឹកនាំរួចរាល់ហើយបាទ។"
             with open(LEAVE_FILE, mode="a", newline="", encoding="utf-8-sig") as f:
                 writer = csv.writer(f)
                 writer.writerow([now_str, officer_id, emp_name, leave_type, leave_date, duration, reason, "Approved"])
@@ -334,7 +318,6 @@ async def cancel(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text("❌ ដំណើរការត្រូវបានបោះបង់។", reply_markup=ReplyKeyboardRemove())
     return ConversationHandler.END
 
-# --- 📊 ផ្នែកទាញរបាយការណ៍ ---
 async def get_report(update: Update, context: ContextTypes.DEFAULT_TYPE):
     command = update.message.text
     if command == "/report_leave":
@@ -346,7 +329,7 @@ async def get_report(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
     
     if not os.path.exists(REPORT_FILE):
-        await update.message.reply_text("❌ មិនទាន់មានទិន្នន័យវត្តមានក្នុងប្រព័ន្ធឡើយ।")
+        await update.message.reply_text("❌ មិនទាន់មានទិន្នន័យវត្តមានក្នុងប្រព័ន្ធឡើយ។")
         return
     now = get_khmer_timezone_now()
     output_filename = f"វត្តមាន_{command.replace('/', '')}_{now.strftime('%Y%m%d')}.csv"
@@ -369,11 +352,10 @@ async def get_report(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("ℹ️ មិនមានទិន្នន័យឡើយ។")
     if os.path.exists(output_filename): os.remove(output_filename)
 
-def main():
-    # ចាប់ផ្តើមដំណើរការ Web Server សម្រាប់ដាស់ Bot ជាមុន
-    keep_alive()
-
-    # Token ផ្លូវការរបស់លោក
+# =========================================================================
+# 🚀 មុខងារចម្ងាយរត់បំបែក Thread (Telegram Bot Worker)
+# =========================================================================
+def run_telegram_bot():
     BOT_TOKEN = "8966159307:AAFnHG8h-D6uhEhSh6LmUVe7Ujkpry9du2E"
     app = Application.builder().token(BOT_TOKEN).build()
 
@@ -403,8 +385,15 @@ def main():
     app.add_handler(CommandHandler("report_month", get_report))
     app.add_handler(CommandHandler("report_leave", get_report))
 
-    print("🚀 កំពុងដំណើរការប្រព័ន្ធគ្រប់គ្រងវត្តមាន រួមជាមួយ Web Server ដាស់ស្វ័យប្រវត្ត...")
-    app.run_polling()
+    print("🤖 Telegram Bot Worker ចាប់ផ្តើមរត់...")
+    app.run_polling(close_loop=False)
 
 if __name__ == "__main__":
-    main()
+    # ១. បង្កើត Thread មួយដាច់ដោយឡែកសម្រាប់រត់ Telegram Bot នៅខាងក្រោយ (Background)
+    bot_thread = Thread(target=run_telegram_bot)
+    bot_thread.daemon = True
+    bot_thread.start()
+
+    # ២. រត់ Flask Web Server ជាលំហូរចម្ងាយចម្បង (Main Thread) សម្រាប់ឆ្លើយតបទៅ Render និង UptimeRobot
+    print("🌐 Main Web Server ចាប់ផ្តើមរត់...")
+    run_web_server()
