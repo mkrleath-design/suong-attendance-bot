@@ -83,21 +83,35 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text("📸 ទទួលបានរូបថតជោគជ័យ! សូមចុចប៊ូតុងខាងក្រោមដើម្បីផ្ញើទីតាំង GPS។", reply_markup=ReplyKeyboardMarkup([[{"text": "📍 ផ្ញើទីតាំងបច្ចុប្បន្ន (Share GPS)", "request_location": True}]], one_time_keyboard=True, resize_keyboard=True))
     return LOCATION
 
+# =========================================================================
+# 📍 ផ្នែកពិនិត្យទីតាំង GPS ដ៏តឹងរ៉ឹង (កែសម្រួលរួចរាល់)
+# =========================================================================
 async def handle_location(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_loc = update.message.location
     now = get_khmer_timezone_now()
     distance = calculate_distance(user_loc.latitude, user_loc.longitude, OFFICE_LAT, OFFICE_LON)
+    
+    # 🚨 បើចម្ងាយលើសពីការកំណត់ ត្រូវផ្ដាច់ដំណើរការចោលភ្លាមៗ មិនឱ្យសរសេរចូល CSV ឬផ្ញើទៅគ្រុបឡើយ
     if distance > ALLOWED_RADIUS_M:
-        await update.message.reply_text(f"❌ មិនអាចចុះវត្តមានបានទេ! អ្នកស្ថិតនៅចម្ងាយ {int(distance)}ម ក្រៅតំបន់សាលាក្រុងសួង។", reply_markup=ReplyKeyboardRemove())
-        return ConversationHandler.END
+        await update.message.reply_text(
+            f"❌ មិនអាចចុះវត្តមានបានទេ!\n📍 ទីតាំងបច្ចុប្បន្ន៖ ស្ថិតនៅចម្ងាយ {int(distance)} ម៉ែត្រ\n🚫 លក្ខខណ្ឌ៖ ត្រូវស្ថិតនៅក្នុងរង្វង់ {ALLOWED_RADIUS_M} ម៉ែត្រ ពីសាលាក្រុងសួង។", 
+            reply_markup=ReplyKeyboardRemove()
+        )
+        return ConversationHandler.END  # 🛑 បញ្ឈប់ និងកាត់ផ្ដាច់លំហូរកូដត្រឹមកន្លែងនេះ
+
+    # 🟢 បើស្ថិតក្នុងរង្វង់ ១៥០ម៉ែត្រ ដំណើរការកូដខាងក្រោមជាធម្មតា
     att_type, status_time = check_attendance_shift(now)
     season, quarter, semester = get_khmer_season_info(now)
+    
     with open(REPORT_FILE, mode="a", newline="", encoding="utf-8-sig") as f:
         csv.writer(f).writerow([now.strftime("%Y-%m-%d"), now.strftime("%H:%M:%S"), update.message.from_user.id, update.message.from_user.full_name, att_type, status_time, int(distance), season, now.strftime("%B"), quarter, semester])
+    
     await update.message.reply_text(f"✅ ចុះវត្តមានជោគជ័យ!\n🗓 កាលបរិច្ឆេទ៖ {now.strftime('%Y-%m-%d')}\n⏰ ម៉ោង៖ {now.strftime('%H:%M:%S')}\n📋 ប្រភេទ៖ {att_type}\n🎯 ស្ថានភាព៖ {status_time}", reply_markup=ReplyKeyboardRemove())
+    
     try:
         await context.bot.send_photo(chat_id=GROUP_ID, photo=context.user_data['photo_id'], caption=f"📢 វត្តមាន៖ {update.message.from_user.full_name}\n⏰ ម៉ោង៖ {now.strftime('%H:%M:%S')} ({att_type})\n📍 ចម្ងាយ៖ {int(distance)}ម\n📌 ស្ថានភាព៖ {status_time}")
-    except: pass
+    except: 
+        pass
     return ConversationHandler.END
 
 async def leave_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -152,37 +166,31 @@ async def global_callback_handler(update: Update, context: ContextTypes.DEFAULT_
         except: pass
 
 async def cancel(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text("❌ ដំណើរការត្រូវបានបោះបង់។", reply_markup=ReplyKeyboardRemove())
+    await update.message.reply_text("❌ ដំណើរការត្រូវបានបោះបង់ nudge។", reply_markup=ReplyKeyboardRemove())
     return ConversationHandler.END
 
 # =========================================================================
 # 🌐 ផ្នែក Web Server (Flask) រួមបញ្ចូលជាមួយ Webhook ផ្លូវការ
 # =========================================================================
 web_app = Flask('')
-
-# បង្កើត Application របស់ Telegram Bot ទុកជាសកល
 telegram_app = Application.builder().token(BOT_TOKEN).build()
 
-# ដាក់បញ្ចូលមុខងារបញ្ជាផ្សេងៗ (Handlers)
 telegram_app.add_handler(ConversationHandler(entry_points=[CommandHandler("start", start)], states={PHOTO: [MessageHandler(filters.PHOTO, handle_photo)], LOCATION: [MessageHandler(filters.LOCATION, handle_location)]}, fallbacks=[CommandHandler("cancel", cancel)]))
 telegram_app.add_handler(ConversationHandler(entry_points=[CommandHandler("leave", leave_start)], states={LEAVE_DURATION: [MessageHandler(filters.TEXT & ~filters.COMMAND, leave_duration_chosen)], LEAVE_REASON: [MessageHandler(filters.TEXT & ~filters.COMMAND, leave_reason_chosen)]}, fallbacks=[CommandHandler("cancel", cancel)]))
 telegram_app.add_handler(CallbackQueryHandler(global_callback_handler))
 
 @web_app.route('/')
 def home(): 
-    return "Bot របស់រដ្ឋបាលក្រុងសួង កំពុងដំណើរការតាម Webhook យ៉ាងរលូន!"
+    return "Bot របស់រដ្ឋបាលក្រុងសួង កំពុងដំណើរការយ៉ាងរលូន!"
 
 @web_app.route('/webhook', methods=['POST'])
 def webhook():
-    # ទទួលទិន្នន័យពី Telegram រួចរុញចូលដំណើរការតាមប្រព័ន្ធ Async
     update = Update.de_json(request.get_json(force=True), telegram_app.bot)
-    
     try:
         loop = asyncio.get_running_loop()
     except RuntimeError:
         loop = asyncio.new_event_loop()
         asyncio.set_event_loop(loop)
-        
     loop.run_until_complete(telegram_app.process_update(update))
     return "OK", 200
 
@@ -191,13 +199,11 @@ def set_webhook_init():
         await telegram_app.initialize()
         await telegram_app.bot.set_webhook(url=f"{RENDER_URL}/webhook")
         print("🚀 Webhook Connected Successfully!")
-    
     try:
         loop = asyncio.get_event_loop()
     except RuntimeError:
         loop = asyncio.new_event_loop()
         asyncio.set_event_loop(loop)
-        
     loop.run_until_complete(_init())
 
 if __name__ == "__main__":
