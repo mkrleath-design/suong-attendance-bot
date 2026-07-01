@@ -37,17 +37,23 @@ def keep_alive():
 # =========================================================================
 # ⚙️ ផ្នែកកំណត់ទិន្នន័យ Bot ធម្មតា
 # =========================================================================
+# កំណត់ទីតាំងសាលាក្រុងសួង
 OFFICE_LAT = 11.9167
 OFFICE_LON = 105.6667
 ALLOWED_RADIUS_M = 150
 
+# ឈ្មោះឯកសាររក្សាទុកទិន្នន័យ
 REPORT_FILE = "attendance_records.csv"
 LEAVE_FILE = "leave_records.csv"
+
+# ID ក្រុមរបស់លោក (សូមប្តូរឱ្យត្រូវនឹង Group របស់លោកពិតប្រាកដ)
 GROUP_ID = "-5126809493" 
 
+# ស្ថានភាពសម្រាប់ Conversation វត្តមាន និងសុំច្បាប់
 PHOTO, LOCATION = range(2)
 LEAVE_DURATION, LEAVE_REASON = range(2, 4)
 
+# បង្កើតឯកសារ CSV បើមិនទាន់មាន
 if not os.path.exists(REPORT_FILE):
     with open(REPORT_FILE, mode="w", newline="", encoding="utf-8-sig") as f:
         writer = csv.writer(f)
@@ -72,7 +78,7 @@ def calculate_distance(lat1, lon1, lat2, lon2):
     from math import radians, cos, sin, asin, sqrt
     lat1, lon1, lat2, lon2 = map(radians, [lat1, lon1, lat2, lon2])
     dlat = lat2 - lat1
-    dlon = lon2 - lon1
+    dlon = dlon1 = lon2 - lon1
     a = sin(dlat/2)**2 + cos(lat1) * cos(lat2) * sin(dlon/2)**2
     c = 2 * asin(sqrt(a))
     return c * 6371000
@@ -106,6 +112,7 @@ def check_attendance_shift(now_dt):
     else:
         return "ក្រៅម៉ោងរដ្ឋបាល", "យឺត / អវត្តមាន"
 
+# --- 📅 ផ្នែកបង្កើតប្រតិទិនចុចរើសថ្ងៃ ---
 def create_calendar(year, month):
     keyboard = []
     row_header = [InlineKeyboardButton(f"🗓️ {calendar.month_name[month]} {year}", callback_data="IGNORE")]
@@ -134,6 +141,7 @@ def create_calendar(year, month):
     
     return InlineKeyboardMarkup(keyboard)
 
+# --- 📱 ផ្នែកកូដចុះវត្តមានធម្មតា ---
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(
         "📥 ស្វាគមន៍មកកាន់ប្រព័ន្ធរដ្ឋបាលក្រុងសួង!\n"
@@ -156,7 +164,7 @@ async def handle_location(update: Update, context: ContextTypes.DEFAULT_TYPE):
     distance = calculate_distance(user_loc.latitude, user_loc.longitude, OFFICE_LAT, OFFICE_LON)
     
     if distance > ALLOWED_RADIUS_M:
-        await update.message.reply_text(f"❌ មិនអាចចុះវត្តមានបានទេ! អ្នកស្ថិតនៅចម្ងាយ {int(distance)}ម ក្រៅតំបន់សាលាក្រុងសួង।", reply_markup=ReplyKeyboardRemove())
+        await update.message.reply_text(f"❌ មិនអាចចុះវត្តមានបានទេ! អ្នកស្ថិតនៅចម្ងាយ {int(distance)}ម ក្រៅតំបន់សាលាក្រុងសួង។", reply_markup=ReplyKeyboardRemove())
         return ConversationHandler.END
 
     attendance_type, status_time = check_attendance_shift(now)
@@ -177,6 +185,9 @@ async def handle_location(update: Update, context: ContextTypes.DEFAULT_TYPE):
         print(f"Error: {e}")
     return ConversationHandler.END
 
+# =========================================================================
+# 🛠️ ផ្នែកកូដប្រព័ន្ធសុំច្បាប់សម្រាក
+# =========================================================================
 async def leave_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     keyboard = [["ច្បាប់ឈឺ (Sick Leave)", "ច្បាប់ផ្ទាល់ខ្លួន (Special Leave)"]]
     reply_markup = ReplyKeyboardMarkup(keyboard, one_time_keyboard=True, resize_keyboard=True)
@@ -234,6 +245,7 @@ async def leave_reason_chosen(update: Update, context: ContextTypes.DEFAULT_TYPE
     await update.message.reply_text("⏳ ពាក្យសុំច្បាប់របស់លោកស្រីត្រូវបានបញ្ជូនទៅកាន់ថ្នាក់ដឹកនាំរួចរាល់ហើយ។ សូមរង់ចាំការពិនិត្យអនុម័ត!")
     return ConversationHandler.END
 
+# --- ⚙️ ផ្នែកគ្រប់គ្រងប៊ូតុងទាំងអស់ (All Callbacks Unified) ---
 async def global_callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     data = query.data
@@ -322,6 +334,7 @@ async def cancel(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text("❌ ដំណើរការត្រូវបានបោះបង់។", reply_markup=ReplyKeyboardRemove())
     return ConversationHandler.END
 
+# --- 📊 ផ្នែកទាញរបាយការណ៍ ---
 async def get_report(update: Update, context: ContextTypes.DEFAULT_TYPE):
     command = update.message.text
     if command == "/report_leave":
@@ -333,7 +346,7 @@ async def get_report(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
     
     if not os.path.exists(REPORT_FILE):
-        await update.message.reply_text("❌ មិនទាន់មានទិន្នន័យវត្តមានក្នុងប្រព័ន្ធឡើយ។")
+        await update.message.reply_text("❌ មិនទាន់មានទិន្នន័យវត្តមានក្នុងប្រព័ន្ធឡើយ।")
         return
     now = get_khmer_timezone_now()
     output_filename = f"វត្តមាន_{command.replace('/', '')}_{now.strftime('%Y%m%d')}.csv"
@@ -360,6 +373,7 @@ def main():
     # ចាប់ផ្តើមដំណើរការ Web Server សម្រាប់ដាស់ Bot ជាមុន
     keep_alive()
 
+    # Token ផ្លូវការរបស់លោក
     BOT_TOKEN = "8966159307:AAFnHG8h-D6uhEhSh6LmUVe7Ujkpry9du2E"
     app = Application.builder().token(BOT_TOKEN).build()
 
