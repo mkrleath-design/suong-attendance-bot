@@ -17,7 +17,7 @@ from telegram.ext import (
 )
 
 # =========================================================================
-# ⚙️ ទាញយកតម្លៃ Token និង URL ពី Render Environment (ឬប្រើ Default បើគ្មាន)
+# ⚙️ ទាញយកតម្លៃ Token និង URL ពី Render Environment
 # =========================================================================
 BOT_TOKEN = os.environ.get("BOT_TOKEN", "8966159307:AAFnHG8h-D6uhEhSh6LmUVe7Ujkpry9du2E")
 RENDER_URL = os.environ.get("RENDER_EXTERNAL_URL", "https://suong-attendance-bot.onrender.com")
@@ -28,7 +28,7 @@ ALLOWED_RADIUS_M = 150
 
 REPORT_FILE = "attendance_records.csv"
 LEAVE_FILE = "leave_records.csv"
-GROUP_ID = "-4756534568" 
+GROUP_ID = "-5126809493" 
 
 PHOTO, LOCATION = range(2)
 LEAVE_DURATION, LEAVE_REASON = range(2, 4)
@@ -156,38 +156,49 @@ async def cancel(update: Update, context: ContextTypes.DEFAULT_TYPE):
     return ConversationHandler.END
 
 # =========================================================================
-# 🌐 ផ្នែក Web Server (Flask) រួមបញ្ចូលជាមួយ Webhook ផ្លូវការ (បោះបង់ Polling)
+# 🌐 ផ្នែក Web Server (Flask) រួមបញ្ចូលជាមួយ Webhook ផ្លូវការ
 # =========================================================================
 web_app = Flask('')
+
+# បង្កើត Application របស់ Telegram Bot ទុកជាសកល
 telegram_app = Application.builder().token(BOT_TOKEN).build()
 
-# បន្ថែម Handler ទៅក្នុងប្រព័ន្ធរៀបចំកូដ
+# ដាក់បញ្ចូលមុខងារបញ្ជាផ្សេងៗ (Handlers)
 telegram_app.add_handler(ConversationHandler(entry_points=[CommandHandler("start", start)], states={PHOTO: [MessageHandler(filters.PHOTO, handle_photo)], LOCATION: [MessageHandler(filters.LOCATION, handle_location)]}, fallbacks=[CommandHandler("cancel", cancel)]))
 telegram_app.add_handler(ConversationHandler(entry_points=[CommandHandler("leave", leave_start)], states={LEAVE_DURATION: [MessageHandler(filters.TEXT & ~filters.COMMAND, leave_duration_chosen)], LEAVE_REASON: [MessageHandler(filters.TEXT & ~filters.COMMAND, leave_reason_chosen)]}, fallbacks=[CommandHandler("cancel", cancel)]))
 telegram_app.add_handler(CallbackQueryHandler(global_callback_handler))
 
 @web_app.route('/')
 def home(): 
-    return "Bot របស់រដ្ឋបាលក្រុងសួង កំពុងដំណើរការយ៉ាងរលូន!"
+    return "Bot របស់រដ្ឋបាលក្រុងសួង កំពុងដំណើរការតាម Webhook យ៉ាងរលូន!"
 
 @web_app.route('/webhook', methods=['POST'])
 def webhook():
-    # ប្រើប្រាស់ loop ចម្បងរបស់ Flask ផ្ទាល់ដើម្បីបញ្ជូនព័ត៌មានទៅ Telegram
+    # ទទួលទិន្នន័យពី Telegram រួចរុញចូលដំណើរការតាមប្រព័ន្ធ Async
     update = Update.de_json(request.get_json(force=True), telegram_app.bot)
-    asyncio.run(telegram_app.process_update(update))
+    
+    try:
+        loop = asyncio.get_running_loop()
+    except RuntimeError:
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
+        
+    loop.run_until_complete(telegram_app.process_update(update))
     return "OK", 200
 
-# មុខងារកំណត់រៀបចំ Webhook ដំបូងបង្អស់ពេលបើកម៉ាស៊ីន
 def set_webhook_init():
     async def _init():
         await telegram_app.initialize()
         await telegram_app.bot.set_webhook(url=f"{RENDER_URL}/webhook")
-        print("🚀 Webhook បានភ្ជាប់ទៅ Telegram រួចរាល់!")
+        print("🚀 Webhook Connected Successfully!")
     
     try:
-        asyncio.run(_init())
-    except Exception as e:
-        print(f"⚠️ សម្គាល់ការដំឡើង៖ {e}")
+        loop = asyncio.get_event_loop()
+    except RuntimeError:
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
+        
+    loop.run_until_complete(_init())
 
 if __name__ == "__main__":
     set_webhook_init()
