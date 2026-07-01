@@ -4,8 +4,7 @@ import calendar
 import asyncio
 from datetime import datetime
 import pytz
-from threading import Thread
-from flask import Flask
+from flask import Flask, request
 from telegram import Update, ReplyKeyboardMarkup, ReplyKeyboardRemove, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import (
     Application,
@@ -18,21 +17,11 @@ from telegram.ext import (
 )
 
 # =========================================================================
-# 🌐 ផ្នែក Web Server (Flask) - សម្រាប់ឆ្លើយតបទៅ Render និង UptimeRobot
-# =========================================================================
-web_app = Flask('')
-
-@web_app.route('/')
-def home():
-    return "Bot របស់រដ្ឋបាលក្រុងសួង ដំណើរការជោគជ័យ និងកំពុងរង់ចាំការ Ping!"
-
-def run_web_server():
-    port = int(os.environ.get("PORT", 10000))
-    web_app.run(host='0.0.0.0', port=port)
-
-# =========================================================================
 # ⚙️ ផ្នែកកំណត់ទិន្នន័យទូទៅរបស់ Bot
 # =========================================================================
+BOT_TOKEN = "8966159307:AAFnHG8h-D6uhEhSh6LmUVe7Ujkpry9du2E"  # សូមប្តូរជា Token ថ្មីរបស់លោកបើមាន
+RENDER_URL = "https://suong-attendance-bot.onrender.com" # លីង Render របស់លោក
+
 OFFICE_LAT = 11.9167
 OFFICE_LON = 105.6667
 ALLOWED_RADIUS_M = 150
@@ -44,359 +33,161 @@ GROUP_ID = "-5126809493"
 PHOTO, LOCATION = range(2)
 LEAVE_DURATION, LEAVE_REASON = range(2, 4)
 
-if not os.path.exists(REPORT_FILE):
-    with open(REPORT_FILE, mode="w", newline="", encoding="utf-8-sig") as f:
-        writer = csv.writer(f)
-        writer.writerow(["កាលបរិច្ឆេទ", "ម៉ោង", "ID មន្ត្រី", "ឈ្មោះគណនី", "ប្រភេទវត្តមាន", "ស្ថានភាពម៉ោង", "ចម្ងាយ(ម៉ែត្រ)", "រដូវកាល", "ខែ", "ត្រីមាស", "ឆមាស"])
+# បង្កើតឯកសារ CSV បើមិនទាន់មាន
+for file, headers in [(REPORT_FILE, ["កាលបរិច្ឆេទ", "ម៉ោង", "ID មន្ត្រី", "ឈ្មោះគណនី", "ប្រភេទវត្តមាន", "ស្ថានភាពម៉ោង", "ចម្ងាយ(ម៉ែត្រ)", "រដូវកាល", "ខែ", "ត្រីមាស", "ឆមាស"]),
+                      (LEAVE_FILE, ["កាលបរិច្ឆេទស្នើសុំ", "ID មន្ត្រី", "ឈ្មោះមន្ត្រី", "ប្រភេទច្បាប់", "ថ្ងៃចាប់ផ្តើម", "រយៈពេល", "មូលហេតុ", "ស្ថានភាព"])]:
+    if not os.path.exists(file):
+        with open(file, mode="w", newline="", encoding="utf-8-sig") as f:
+            csv.writer(f).writerow(headers)
 
-if not os.path.exists(LEAVE_FILE):
-    with open(LEAVE_FILE, mode="w", newline="", encoding="utf-8-sig") as f:
-        writer = csv.writer(f)
-        writer.writerow(["កាលបរិច្ឆេទស្នើសុំ", "ID មន្ត្រី", "ឈ្មោះមន្ត្រី", "ប្រភេទច្បាប់", "ថ្ងៃចាប់ផ្តើម", "រយៈពេល", "មូលហេតុ", "ស្ថានភាព"])
-
-def get_khmer_timezone_now():
-    return datetime.now(pytz.timezone('Asia/Phnom_Penh'))
+def get_khmer_timezone_now(): return datetime.now(pytz.timezone('Asia/Phnom_Penh'))
 
 def get_khmer_season_info(dt):
     month = dt.month
-    season = "រដូវវស្សា" if 5 <= month <= 10 else "រដូវប្រាំង"
-    quarter = f"ត្រីមាសទី{(month-1)//3 + 1}"
-    semester = "ឆមាសទី១" if month <= 6 else "ឆមាសទី២"
-    return season, quarter, semester
+    return ("រដូវវស្សา" if 5 <= month <= 10 else "រដូវប្រាំង", f"ត្រីមាសទី{(month-1)//3 + 1}", "ឆមាសទី១" if month <= 6 else "ឆមាសទី២")
 
 def calculate_distance(lat1, lon1, lat2, lon2):
     from math import radians, cos, sin, asin, sqrt
     lat1, lon1, lat2, lon2 = map(radians, [lat1, lon1, lat2, lon2])
-    dlat = lat2 - lat1
-    dlon = lon2 - lon1
-    a = sin(dlat/2)**2 + cos(lat1) * cos(lat2) * sin(dlon/2)**2
-    c = 2 * asin(sqrt(a))
-    return c * 6371000
+    return 2 * asin(sqrt(sin((lat2 - lat1)/2)**2 + cos(lat1) * cos(lat2) * sin((lon2 - lon1)/2)**2)) * 6371000
 
 def check_attendance_shift(now_dt):
     current_time = now_dt.time()
-    shift_morning_in_start = datetime.strptime("07:30", "%H:%M").time()
-    shift_morning_in_end   = datetime.strptime("08:00", "%H:%M").time()
-    shift_morning_out_start = datetime.strptime("11:00", "%H:%M").time()
-    shift_morning_out_end   = datetime.strptime("11:30", "%H:%M").time()
-    
-    shift_afternoon_in_start = datetime.strptime("14:00", "%H:%M").time()
-    shift_afternoon_in_end   = datetime.strptime("14:30", "%H:%M").time()
-    shift_afternoon_out_start = datetime.strptime("17:00", "%H:%M").time()
-    shift_afternoon_out_end   = datetime.strptime("17:30", "%H:%M").time()
-
-    if shift_morning_in_start <= current_time <= shift_morning_in_end:
-        return "ចូលការងារ (ព្រឹក)", "ទាន់ពេល"
-    elif shift_morning_in_end < current_time < shift_morning_out_start:
-        return "ចូលការងារ (ព្រឹក)", "យឺត / អវត្តមាន"
-    elif shift_morning_out_start <= current_time <= shift_morning_out_end:
-        return "ចេញការងារ (ព្រឹក)", "ទាន់ពេល"
-    elif shift_morning_out_end < current_time < shift_afternoon_in_start:
-        return "ចេញការងារ (ព្រឹក)", "យឺត / អវត្តមាន"
-    elif shift_afternoon_in_start <= current_time <= shift_afternoon_in_end:
-        return "ចូលការងារ (រសៀល)", "ទាន់ពេល"
-    elif shift_afternoon_in_end < current_time < shift_afternoon_out_start:
-        return "ចូលការងារ (រសៀល)", "យឺត / អវត្តមាន"
-    elif shift_afternoon_out_start <= current_time <= shift_afternoon_out_end:
-        return "ចេញការងារ (រសៀល)", "ទាន់ពេល"
-    else:
-        return "ក្រៅម៉ោងរដ្ឋបាល", "យឺត / អវត្តមាន"
-
-# --- 📅 ប្រព័ន្ធប្រតិទិន ---
-def create_calendar(year, month):
-    keyboard = []
-    row_header = [InlineKeyboardButton(f"🗓️ {calendar.month_name[month]} {year}", callback_data="IGNORE")]
-    keyboard.append(row_header)
-    
-    row_days = []
-    for day in ["ច", "អ", "ព", "ព្រ", "សុ", "ស", "អា"]:
-        row_days.append(InlineKeyboardButton(day, callback_data="IGNORE"))
-    keyboard.append(row_days)
-    
-    month_calendar = calendar.monthcalendar(year, month)
-    for week in month_calendar:
-        row_week = []
-        for day in week:
-            if day == 0:
-                row_week.append(InlineKeyboardButton(" ", callback_data="IGNORE"))
-            else:
-                row_week.append(InlineKeyboardButton(str(day), callback_data=f"CAL_{year}_{month}_{day}"))
-        keyboard.append(row_week)
-        
-    row_nav = [
-        InlineKeyboardButton("◀️ ខែមុន", callback_data=f"PREV_{year}_{month}"),
-        InlineKeyboardButton("ខែបន្ទាប់ ▶️", callback_data=f"NEXT_{year}_{month}")
+    shifts = [
+        ("07:30", "08:00", "ចូលការងារ (ព្រឹក)", "ទាន់ពេល"),
+        ("08:00", "11:00", "ចូលការងារ (ព្រឹក)", "យឺត / អវត្តមាន"),
+        ("11:00", "11:30", "ចេញការងារ (ព្រឹក)", "ទាន់ពេល"),
+        ("11:30", "14:00", "ចេញការងារ (ព្រឹក)", "យឺត / អវត្តមាន"),
+        ("14:00", "14:30", "ចូលការងារ (រសៀល)", "ទាន់ពេល"),
+        ("14:30", "17:00", "ចូលការងារ (រសៀល)", "យឺត / អវត្តមាន"),
+        ("17:00", "17:30", "ចេញការងារ (រសៀល)", "ទាន់ពេល")
     ]
-    keyboard.append(row_nav)
-    
+    for start, end, att_type, status in shifts:
+        if datetime.strptime(start, "%H:%M").time() <= current_time <= datetime.strptime(end, "%H:%M").time():
+            return att_type, status
+    return "ក្រៅម៉ោងរដ្ឋបាល", "យឺត / អវត្តមាន"
+
+def create_calendar(year, month):
+    keyboard = [[InlineKeyboardButton(f"🗓️ {calendar.month_name[month]} {year}", callback_data="IGNORE")],
+                [InlineKeyboardButton(day, callback_data="IGNORE") for day in ["ច", "អ", "ព", "ព្រ", "សុ", "ស", "អា"]]]
+    for week in calendar.monthcalendar(year, month):
+        keyboard.append([InlineKeyboardButton(str(day) if day != 0 else " ", callback_data=f"CAL_{year}_{month}_{day}" if day != 0 else "IGNORE") for day in week])
+    keyboard.append([InlineKeyboardButton("◀️ ខែមុន", callback_data=f"PREV_{year}_{month}"), InlineKeyboardButton("ខែបន្ទាប់ ▶️", callback_data=f"NEXT_{year}_{month}")])
     return InlineKeyboardMarkup(keyboard)
 
-# --- 📱 មុខងារចុះវត្តមាន និងសុំច្បាប់ ---
+# --- 📱 មុខងារស្នូលរបស់ Bot ---
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text(
-        "📥 ស្វាគមន៍មកកាន់ប្រព័ន្ធរដ្ឋបាលក្រុងសួង!\n"
-        "• ចុះវត្តមាន៖ សូមផ្ញើរូបថត Selfie របស់អ្នក\n"
-        "• សុំច្បាប់សម្រាក៖ សូមវាយបញ្ជា /leave"
-    )
+    await update.message.reply_text("📥 ស្វាគមន៍មកកាន់ប្រព័ន្ធរដ្ឋបាលក្រុងសួង!\n• ចុះវត្តមាន៖ សូមផ្ញើរូបថត Selfie\n• សុំច្បាប់៖ វាយបញ្ជា /leave")
     return PHOTO
 
 async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    photo_file = await update.message.photo[-1].get_file()
-    context.user_data['photo_id'] = photo_file.file_id
-    location_keyboard = [[{"text": "📍 ផ្ញើទីតាំងបច្ចុប្បន្ន (Share GPS)", "request_location": True}]]
-    reply_markup = ReplyKeyboardMarkup(location_keyboard, one_time_keyboard=True, resize_keyboard=True)
-    await update.message.reply_text("📸 ទទួលបានរូបថតជោគជ័យ! សូមចុចប៊ូតុងខាងក្រោមដើម្បីផ្ញើទីតាំង GPS។", reply_markup=reply_markup)
+    context.user_data['photo_id'] = update.message.photo[-1].file_id
+    await update.message.reply_text("📸 ទទួលបានរូបថតជោគជ័យ! សូមចុចប៊ូតុងខាងក្រោមដើម្បីផ្ញើទីតាំង GPS។", reply_markup=ReplyKeyboardMarkup([[{"text": "📍 ផ្ញើទីតាំងបច្ចុប្បន្ន (Share GPS)", "request_location": True}]], one_time_keyboard=True, resize_keyboard=True))
     return LOCATION
 
 async def handle_location(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_loc = update.message.location
     now = get_khmer_timezone_now()
     distance = calculate_distance(user_loc.latitude, user_loc.longitude, OFFICE_LAT, OFFICE_LON)
-    
     if distance > ALLOWED_RADIUS_M:
         await update.message.reply_text(f"❌ មិនអាចចុះវត្តមានបានទេ! អ្នកស្ថិតនៅចម្ងាយ {int(distance)}ម ក្រៅតំបន់សាលាក្រុងសួង។", reply_markup=ReplyKeyboardRemove())
         return ConversationHandler.END
-
-    attendance_type, status_time = check_attendance_shift(now)
+    att_type, status_time = check_attendance_shift(now)
     season, quarter, semester = get_khmer_season_info(now)
-    date_str = now.strftime("%Y-%m-%d")
-    time_str = now.strftime("%H:%M:%S")
-
     with open(REPORT_FILE, mode="a", newline="", encoding="utf-8-sig") as f:
-        writer = csv.writer(f)
-        writer.writerow([date_str, time_str, update.message.from_user.id, update.message.from_user.full_name, attendance_type, status_time, int(distance), season, now.strftime("%B"), quarter, semester])
-
-    await update.message.reply_text(f"✅ ចុះវត្តមានជោគជ័យ!\n🗓 កាលបរិច្ឆេទ៖ {date_str}\n⏰ ម៉ោង៖ {time_str}\n📋 ប្រភេទ៖ {attendance_type}\n🎯 ស្ថានភាព៖ {status_time}", reply_markup=ReplyKeyboardRemove())
-    
+        csv.writer(f).writerow([now.strftime("%Y-%m-%d"), now.strftime("%H:%M:%S"), update.message.from_user.id, update.message.from_user.full_name, att_type, status_time, int(distance), season, now.strftime("%B"), quarter, semester])
+    await update.message.reply_text(f"✅ ចុះវត្តមានជោគជ័យ!\n🗓 កាលបរិច្ឆេទ៖ {now.strftime('%Y-%m-%d')}\n⏰ ម៉ោង៖ {now.strftime('%H:%M:%S')}\n📋 ប្រភេទ៖ {att_type}\n🎯 ស្ថានភាព៖ {status_time}", reply_markup=ReplyKeyboardRemove())
     try:
-        caption = f"📢 វត្តមានមន្ត្រី៖ {update.message.from_user.full_name}\n⏰ ម៉ោង៖ {time_str} ({attendance_type})\n📍 ចម្ងាយ៖ {int(distance)}ម\n📌 ស្ថានភាព៖ {status_time}"
-        await context.bot.send_photo(chat_id=GROUP_ID, photo=context.user_data['photo_id'], caption=caption)
-    except Exception as e:
-        print(f"Error: {e}")
+        await context.bot.send_photo(chat_id=GROUP_ID, photo=context.user_data['photo_id'], caption=f"📢 វត្តមាន៖ {update.message.from_user.full_name}\n⏰ ម៉ោង៖ {now.strftime('%H:%M:%S')} ({att_type})\n📍 ចម្ងាយ៖ {int(distance)}ម\n📌 ស្ថានភាព៖ {status_time}")
+    except: pass
     return ConversationHandler.END
 
 async def leave_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    keyboard = [["ច្បាប់ឈឺ (Sick Leave)", "ច្បាប់ផ្ទាល់ខ្លួន (Special Leave)"]]
-    reply_markup = ReplyKeyboardMarkup(keyboard, one_time_keyboard=True, resize_keyboard=True)
-    await update.message.reply_text("📋 សូមជ្រើសរើសប្រភេទច្បាប់សម្រាក៖", reply_markup=reply_markup)
+    await update.message.reply_text("📋 សូមជ្រើសរើសប្រភេទច្បាប់សម្រាក៖", reply_markup=ReplyKeyboardMarkup([["ច្បាប់ឈឺ (Sick Leave)", "ច្បាប់ផ្ទាល់ខ្លួន (Special Leave)"]], one_time_keyboard=True, resize_keyboard=True))
     return LEAVE_DURATION
 
 async def leave_duration_chosen(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    text_input = update.message.text
-    if "ច្បាប់ឈឺ" in text_input or "ច្បាប់ផ្ទាល់ខ្លួន" in text_input:
-        context.user_data['leave_type'] = text_input
+    text = update.message.text
+    if "ច្បាប់" in text:
+        context.user_data['leave_type'] = text
         now = get_khmer_timezone_now()
-        reply_markup = create_calendar(now.year, now.month)
-        await update.message.reply_text(
-            "📅 **សូមជ្រើសរើសកាលបរិច្ឆេទឈប់សម្រាកពីប្រតិទិនខាងក្រោម៖**\n"
-            "*(លក្ខខណ្ឌ៖ ត្រូវសុំច្បាប់មុនថ្ងៃបំពេញការងារ ចាប់ពីថ្ងៃស្អែកឡើងទៅ)*",
-            parse_mode="Markdown",
-            reply_markup=reply_markup
-        )
+        await update.message.reply_text("📅 **សូមជ្រើសរើសកាលបរិច្ឆេទឈប់សម្រាកពីប្រតិទិន៖**", parse_mode="Markdown", reply_markup=create_calendar(now.year, now.month))
         return LEAVE_DURATION
-    context.user_data['leave_duration'] = text_input
-    await update.message.reply_text("📝 សូមសរសេររៀបរាប់ពីមូលហេតុនៃការសុំច្បាប់សម្រាកនេះ៖", reply_markup=ReplyKeyboardRemove())
+    context.user_data['leave_duration'] = text
+    await update.message.reply_text("📝 សូមសរសេររៀបរាប់ពីមូលហេតុនៃការសុំច្បាប់សម្រាក៖", reply_markup=ReplyKeyboardRemove())
     return LEAVE_REASON
 
 async def leave_reason_chosen(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = update.message.from_user
     context.user_data['leave_reason'] = update.message.text
-    
-    l_date = context.user_data.get('leave_date', 'មិនបានកំណត់')
-    l_type = context.user_data.get('leave_type', 'មិនបានកំណត់')
-    l_dur  = context.user_data.get('leave_duration', 'មិនបានកំណត់')
-    l_reas = context.user_data.get('leave_reason', 'មិនបានកំណត់')
-
-    callback_approve = f"lv_appv_{user.id}_{l_date}"
-    callback_reject  = f"lv_rjct_{user.id}_{l_date}"
-
-    inline_keyboard = [[
-        InlineKeyboardButton("✅ អនុម័ត", callback_data=callback_approve),
-        InlineKeyboardButton("❌ បដិសេធ", callback_data=callback_reject)
-    ]]
-    reply_markup = InlineKeyboardMarkup(inline_keyboard)
-
-    group_message = (
-        f"📩 **ពាក្យសុំច្បាប់សម្រាកការងារ**\n"
-        f"👤 ឈ្មោះមន្ត្រី៖ {user.full_name}\n"
-        f"📋 ប្រភេទច្បាប់៖ {l_type}\n"
-        f"📅 សម្រាប់ថ្ងៃទី៖ {l_date}\n"
-        f"⏳ រយៈពេល៖ {l_dur}\n"
-        f"📝 មូលហេតុ៖ {l_reas}\n\n"
-        f"👉 គោរពជូនថ្នាក់ដឹកនាំមេត្តាពិនិត្យ និងសម្រេច៖"
-    )
-    
-    await context.bot.send_message(chat_id=GROUP_ID, text=group_message, reply_markup=reply_markup, parse_mode="Markdown")
-    await update.message.reply_text("⏳ ពាក្យសុំច្បាប់របស់លោកស្រីត្រូវបានបញ្ជូនទៅកាន់ថ្នាក់ដឹកនាំរួចរាល់ហើយ។ សូមរង់ចាំការពិនិត្យអនុម័ត!")
+    l_date, l_type, l_dur, l_reas = context.user_data.get('leave_date', 'មិនបានកំណត់'), context.user_data.get('leave_type', 'មិនបានកំណត់'), context.user_data.get('leave_duration', 'មិនបានកំណត់'), context.user_data.get('leave_reason', 'មិនបានកំណត់')
+    reply_markup = InlineKeyboardMarkup([[InlineKeyboardButton("✅ អនុម័ត", callback_data=f"lv_appv_{user.id}_{l_date}"), InlineKeyboardButton("❌ បដិសេធ", callback_data=f"lv_rjct_{user.id}_{l_date}")]])
+    await context.bot.send_message(chat_id=GROUP_ID, text=f"📩 **ពាក្យសុំច្បាប់សម្រាកការងារ**\n👤 ឈ្មោះមន្ត្រី៖ {user.full_name}\n📋 ប្រភេទច្បាប់៖ {l_type}\n📅 សម្រាប់ថ្ងៃទី៖ {l_date}\n⏳ រយៈពេល៖ {l_dur}\n📝 មូលហេតុ៖ {l_reas}", reply_markup=reply_markup, parse_mode="Markdown")
+    await update.message.reply_text("⏳ ពាក្យសុំច្បាប់របស់លោកស្រីត្រូវបានបញ្ជូនទៅកាន់ថ្នាក់ដឹកនាំរួចរាល់ហើយ។")
     return ConversationHandler.END
 
 async def global_callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     data = query.data
-    
-    if data == "IGNORE":
-        await query.answer()
-        return
-
+    if data == "IGNORE": return await query.answer()
     if data.startswith("PREV_") or data.startswith("NEXT_"):
-        await query.answer()
         parts = data.split("_")
-        year, month = int(parts[1]), int(parts[2])
-        if data.startswith("PREV_"):
-            month -= 1
-            if month == 0: month = 12; year -= 1
-        else:
-            month += 1
-            if month == 13: month = 1; year += 1
-        await query.edit_message_reply_markup(reply_markup=create_calendar(year, month))
-        return
-
+        year, month = int(parts[1]), int(parts[2]) + (-1 if data.startswith("PREV_") else 1)
+        if month == 0: month = 12; year -= 1
+        elif month == 13: month = 1; year += 1
+        return await query.edit_message_reply_markup(reply_markup=create_calendar(year, month))
     if data.startswith("CAL_"):
-        await query.answer()
         parts = data.split("_")
-        year, month, day = int(parts[1]), int(parts[2]), int(parts[3])
-        chosen_date = datetime(year, month, day).date()
-        now_khmer = get_khmer_timezone_now().date()
-
-        if chosen_date <= now_khmer:
-            await context.bot.send_message(
-                chat_id=query.message.chat_id,
-                text="❌ មិនអាចសុំច្បាប់សម្រាប់ថ្ងៃនេះ ឬថ្ងៃកន្លងទៅបានទេ។ សូមជ្រើសរើសថ្ងៃចាប់ពីថ្ងៃស្អែកឡើងទៅនៅលើប្រតិទិនម្តងទៀត៖"
-            )
-            return
-
-        date_str = chosen_date.strftime("%Y-%m-%d")
-        context.user_data['leave_date'] = date_str
-        
-        keyboard = [["កន្លះថ្ងៃ (១ ព្រឹក)", "កន្លះថ្ងៃ (១ រសៀល)"], ["១ ថ្ងៃ", "២ ថ្ងៃ", "៣ ថ្ងៃ"]]
-        reply_markup = ReplyKeyboardMarkup(keyboard, one_time_keyboard=True, resize_keyboard=True)
-        
-        await query.edit_message_text(text=f"📅 ប្រតិទិន៖ បានជ្រើសរើសថ្ងៃ {date_str} រួចរាល់។")
-        await context.bot.send_message(
-            chat_id=query.message.chat_id,
-            text=f"⏳ សូមជ្រើសរើសរយៈពេល ឬចំនួនថ្ងៃដែលត្រូវសុំ៖",
-            reply_markup=reply_markup
-        )
-        return
-
+        chosen_date = datetime(int(parts[1]), int(parts[2]), int(parts[3])).date()
+        if chosen_date <= get_khmer_timezone_now().date():
+            return await context.bot.send_message(chat_id=query.message.chat_id, text="❌ មិនអាចសុំច្បាប់សម្រាប់ថ្ងៃនេះ ឬថ្ងៃកន្លងទៅបានទេ។")
+        context.user_data['leave_date'] = chosen_date.strftime("%Y-%m-%d")
+        await query.edit_message_text(text=f"📅 ប្រតិទិន៖ បានជ្រើសរើសថ្ងៃ {context.user_data['leave_date']} រួចរាល់។")
+        return await context.bot.send_message(chat_id=query.message.chat_id, text=f"⏳ សូមជ្រើសរើសរយៈពេល ឬចំនួនថ្ងៃ៖", reply_markup=ReplyKeyboardMarkup([["កន្លះថ្ងៃ (១ ព្រឹក)", "កន្លះថ្ងៃ (១ រសៀល)"], ["១ ថ្ងៃ", "២ ថ្ងៃ", "៣ ថ្ងៃ"]], one_time_keyboard=True, resize_keyboard=True))
     if data.startswith("lv_appv_") or data.startswith("lv_rjct_"):
-        await query.answer()
-        leader_name = query.from_user.full_name
-        original_text = query.message.text
+        leader = query.from_user.full_name
         parts = data.split("_")
         officer_id = int(parts[2])
-        
-        lines = original_text.split("\n")
-        emp_name = lines[1].replace("👤 ឈ្មោះមន្ត្រី៖ ", "") if len(lines) > 1 else "មិនច្បាស់"
-        leave_type = lines[2].replace("📋 ប្រភេទច្បាប់៖ ", "") if len(lines) > 2 else "មិនច្បាស់"
-        leave_date = lines[3].replace("📅 សម្រាប់ថ្ងៃទី៖ ", "") if len(lines) > 3 else "មិនច្បាស់"
-        duration = lines[4].replace("⏳ រយៈពេល៖ ", "") if len(lines) > 4 else "មិនច្បាស់"
-        reason = lines[5].replace("📝 មូលហេតុ៖ ", "") if len(lines) > 5 else "មិនច្បាស់"
-        
-        now_str = get_khmer_timezone_now().strftime("%Y-%m-%d %H:%M:%S")
-
-        if data.startswith("lv_appv_"):
-            new_status = f"✅ បានអនុម័ត (ដោយ៖ {leader_name})"
-            user_notify_msg = f"🔔 **ដំណឹងពីការសុំច្បាប់សម្រាក៖**\n\nលោក/លោកស្រី **{emp_name}** ទទួលបានការ **«អនុម័ត ✅»** លើពាក្យសុំច្បាប់សម្រាកថ្ងៃទី `{leave_date}` ({duration}) ពីថ្នាក់ដឹកនាំរួចរាល់ហើយបាទ។"
-            with open(LEAVE_FILE, mode="a", newline="", encoding="utf-8-sig") as f:
-                writer = csv.writer(f)
-                writer.writerow([now_str, officer_id, emp_name, leave_type, leave_date, duration, reason, "Approved"])
-        else:
-            new_status = f"❌ មិនអនុម័ត/បដិសេធ (ដោយ៖ {leader_name})"
-            user_notify_msg = f"🔔 **ដំណឹងពីការសុំច្បាប់សម្រាក៖**\n\nសុំទោសលោក/លោកស្រី **{emp_name}** ពាក្យសុំច្បាប់សម្រាកថ្ងៃទី `{leave_date}` ត្រូវបានថ្នាក់ដឹកនាំសម្រេច **«បដិសេធ ❌»**។"
-
-        updated_text = f"{original_text}\n\n📌 **ស្ថានភាព៖** {new_status}"
-        await query.edit_message_text(text=updated_text, parse_mode="Markdown", reply_markup=None)
-        
-        try:
-            await context.bot.send_message(chat_id=officer_id, text=user_notify_msg, parse_mode="Markdown")
-        except Exception as e:
-            print(f"Error notifying user: {e}")
+        status = "Approved" if data.startswith("lv_appv_") else "Rejected"
+        await query.edit_message_text(text=f"{query.message.text}\n\n📌 **ស្ថានភាព៖** {'✅ បានអនុម័ត' if status=='Approved' else '❌ បដិសេធ'} (ដោយ៖ {leader})")
+        try: await context.bot.send_message(chat_id=officer_id, text=f"🔔 ដំណឹង៖ ពាក្យសុំច្បាប់សម្រាកថ្ងៃទី `{parts[3]}` ត្រូវបានថ្នាក់ដឹកនាំសម្រេច **«{'អនុម័ត ✅' if status=='Approved' else 'បដិសេធ ❌'}»**។", parse_mode="Markdown")
+        except: pass
 
 async def cancel(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text("❌ ដំណើរការត្រូវបានបោះបង់។", reply_markup=ReplyKeyboardRemove())
     return ConversationHandler.END
 
-async def get_report(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    command = update.message.text
-    if command == "/report_leave":
-        if os.path.exists(LEAVE_FILE):
-            await update.message.reply_text("📊 កំពុងផ្ញើរបាយការណ៍ច្បាប់សម្រាកមន្ត្រី...")
-            await update.message.reply_document(document=open(LEAVE_FILE, "rb"))
-        else:
-            await update.message.reply_text("ℹ️ មិនទាន់មានទិន្នន័យច្បាប់សម្រាកឡើយ។")
-        return
-    
-    if not os.path.exists(REPORT_FILE):
-        await update.message.reply_text("❌ មិនទាន់មានទិន្នន័យវត្តមានក្នុងប្រព័ន្ធឡើយ។")
-        return
-    now = get_khmer_timezone_now()
-    output_filename = f"វត្តមាន_{command.replace('/', '')}_{now.strftime('%Y%m%d')}.csv"
-    has_data = False
-    with open(REPORT_FILE, mode="r", encoding="utf-8-sig") as src, open(output_filename, mode="w", newline="", encoding="utf-8-sig") as dest:
-        writer = csv.writer(dest)
-        reader = csv.reader(src)
-        header = next(reader, None)
-        if header: writer.writerow(header)
-        for row in reader:
-            if command == "/report_day" and row[0] == now.strftime("%Y-%m-%d"):
-                writer.writerow(row)
-                has_data = True
-            elif command == "/report_month" and int(row[0].split("-")[1]) == now.month:
-                writer.writerow(row)
-                has_data = True
-    if has_data:
-        await update.message.reply_document(document=open(output_filename, "rb"))
-    else:
-        await update.message.reply_text("ℹ️ មិនមានទិន្នន័យឡើយ।")
-    if os.path.exists(output_filename): os.remove(output_filename)
-
 # =========================================================================
-# 🚀 មុខងាររត់បំបែក Thread (Telegram Bot Worker) - បន្ថែម Event Loop ការពារការគាំង
+# 🌐 ផ្នែក Web Server (Flask) រួមបញ្ចូលជាមួយ Webhook ផ្លូវការ
 # =========================================================================
-def run_telegram_bot():
-    # បង្កើត និងកំណត់ Asyncio Event Loop សម្រាប់ Thread នេះដាច់ដោយឡែក
-    loop = asyncio.new_event_loop()
-    asyncio.set_event_loop(loop)
+web_app = Flask('')
+telegram_app = None
 
-    BOT_TOKEN = "8966159307:AAFnHG8h-D6uhEhSh6LmUVe7Ujkpry9du2E"
-    app = Application.builder().token(BOT_TOKEN).build()
+@web_app.route('/')
+def home(): return "Bot របស់រដ្ឋបាលក្រុងសួង កំពុងដំណើរការតាម Webhook ស្តង់ដារ!"
 
-    attendance_handler = ConversationHandler(
-        entry_points=[CommandHandler("start", start)],
-        states={
-            PHOTO: [MessageHandler(filters.PHOTO, handle_photo)],
-            LOCATION: [MessageHandler(filters.LOCATION, handle_location)],
-        },
-        fallbacks=[CommandHandler("cancel", cancel)],
-    )
+@web_app.route('/webhook', methods=['POST'])
+def webhook():
+    # ទទួលទិន្នន័យពី Telegram រួចរុញទៅឱ្យ Bot ភ្លាមៗ
+    if telegram_app:
+        update = Update.de_json(request.get_json(force=True), telegram_app.bot)
+        asyncio.run_coroutine_threadsafe(telegram_app.process_update(update), asyncio.get_event_loop())
+    return "OK", 200
 
-    leave_handler = ConversationHandler(
-        entry_points=[CommandHandler("leave", leave_start)],
-        states={
-            LEAVE_DURATION: [MessageHandler(filters.TEXT & ~filters.COMMAND, leave_duration_chosen)],
-            LEAVE_REASON: [MessageHandler(filters.TEXT & ~filters.COMMAND, leave_reason_chosen)],
-        },
-        fallbacks=[CommandHandler("cancel", cancel)],
-    )
-
-    app.add_handler(attendance_handler)
-    app.add_handler(leave_handler)
-    app.add_handler(CallbackQueryHandler(global_callback_handler)) 
+def init_telegram():
+    global telegram_app
+    telegram_app = Application.builder().token(BOT_TOKEN).build()
     
-    app.add_handler(CommandHandler("report_day", get_report))
-    app.add_handler(CommandHandler("report_month", get_report))
-    app.add_handler(CommandHandler("report_leave", get_report))
+    # ដាក់ Handler ចូល
+    telegram_app.add_handler(ConversationHandler(entry_points=[CommandHandler("start", start)], states={PHOTO: [MessageHandler(filters.PHOTO, handle_photo)], LOCATION: [MessageHandler(filters.LOCATION, handle_location)]}, fallbacks=[CommandHandler("cancel", cancel)]))
+    telegram_app.add_handler(ConversationHandler(entry_points=[CommandHandler("leave", leave_start)], states={LEAVE_DURATION: [MessageHandler(filters.TEXT & ~filters.COMMAND, leave_duration_chosen)], LEAVE_REASON: [MessageHandler(filters.TEXT & ~filters.COMMAND, leave_reason_chosen)]}, fallbacks=[CommandHandler("cancel", cancel)]))
+    telegram_app.add_handler(CallbackQueryHandler(global_callback_handler))
 
-    print("🤖 Telegram Bot Worker ចាប់ផ្តើមរត់ជាមួយ Event Loop ថ្មី...")
-    app.run_polling(close_loop=False)
+    # បើកដំណើរការប្រព័ន្ធរង់ចាំទិន្នន័យ Webhook
+    asyncio.run(telegram_app.initialize())
+    asyncio.run(telegram_app.bot.set_webhook(url=f"{RENDER_URL}/webhook"))
+    print("🚀 Webhook បានភ្ជាប់ទៅ Telegram ជោគជ័យ!")
 
 if __name__ == "__main__":
-    # ១. រត់ Telegram Bot ក្នុង Background Thread
-    bot_thread = Thread(target=run_telegram_bot)
-    bot_thread.daemon = True
-    bot_thread.start()
-
-    # ២. រត់ Flask Web Server ជាលំហូរចម្បង (Main Thread)
-    print("🌐 Main Web Server ចាប់ផ្តើមរត់...")
-    run_web_server()
+    init_telegram()
+    web_app.run(host='0.0.0.0', port=int(os.environ.get("PORT", 10000)))
