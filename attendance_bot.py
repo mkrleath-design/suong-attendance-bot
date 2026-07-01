@@ -1,6 +1,7 @@
 import os
 import csv
 import calendar
+import asyncio
 from datetime import datetime
 import pytz
 from threading import Thread
@@ -17,7 +18,7 @@ from telegram.ext import (
 )
 
 # =========================================================================
-# 🌐 ផ្នែក Web Server (Flask) - កែប្រែឱ្យរត់ជាចម្បងដើម្បីកុំឱ្យ Render ទាត់ចោល
+# 🌐 ផ្នែក Web Server (Flask) - សម្រាប់ឆ្លើយតបទៅ Render និង UptimeRobot
 # =========================================================================
 web_app = Flask('')
 
@@ -27,7 +28,6 @@ def home():
 
 def run_web_server():
     port = int(os.environ.get("PORT", 10000))
-    # រត់ Flask លើ Port 10000 ផ្លូវការរបស់ Render
     web_app.run(host='0.0.0.0', port=port)
 
 # =========================================================================
@@ -44,7 +44,6 @@ GROUP_ID = "-5126809493"
 PHOTO, LOCATION = range(2)
 LEAVE_DURATION, LEAVE_REASON = range(2, 4)
 
-# បង្កើតឯកសារ CSV បើមិនទាន់មាន
 if not os.path.exists(REPORT_FILE):
     with open(REPORT_FILE, mode="w", newline="", encoding="utf-8-sig") as f:
         writer = csv.writer(f)
@@ -298,7 +297,7 @@ async def global_callback_handler(update: Update, context: ContextTypes.DEFAULT_
 
         if data.startswith("lv_appv_"):
             new_status = f"✅ បានអនុម័ត (ដោយ៖ {leader_name})"
-            user_notify_msg = f"🔔 **🔑ដំណឹងពីការសុំច្បាប់សម្រាក៖**\n\nលោក/លោកស្រី **{emp_name}** ទទួលបានការ **«អនុម័ត ✅»** លើពាក្យសុំច្បាប់សម្រាកថ្ងៃទី `{leave_date}` ({duration}) ពីថ្នាក់ដឹកនាំរួចរាល់ហើយបាទ។"
+            user_notify_msg = f"🔔 **ដំណឹងពីការសុំច្បាប់សម្រាក៖**\n\nលោក/លោកស្រី **{emp_name}** ទទួលបានការ **«អនុម័ត ✅»** លើពាក្យសុំច្បាប់សម្រាកថ្ងៃទី `{leave_date}` ({duration}) ពីថ្នាក់ដឹកនាំរួចរាល់ហើយបាទ។"
             with open(LEAVE_FILE, mode="a", newline="", encoding="utf-8-sig") as f:
                 writer = csv.writer(f)
                 writer.writerow([now_str, officer_id, emp_name, leave_type, leave_date, duration, reason, "Approved"])
@@ -349,13 +348,17 @@ async def get_report(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if has_data:
         await update.message.reply_document(document=open(output_filename, "rb"))
     else:
-        await update.message.reply_text("ℹ️ មិនមានទិន្នន័យឡើយ។")
+        await update.message.reply_text("ℹ️ មិនមានទិន្នន័យឡើយ।")
     if os.path.exists(output_filename): os.remove(output_filename)
 
 # =========================================================================
-# 🚀 មុខងារចម្ងាយរត់បំបែក Thread (Telegram Bot Worker)
+# 🚀 មុខងាររត់បំបែក Thread (Telegram Bot Worker) - បន្ថែម Event Loop ការពារការគាំង
 # =========================================================================
 def run_telegram_bot():
+    # បង្កើត និងកំណត់ Asyncio Event Loop សម្រាប់ Thread នេះដាច់ដោយឡែក
+    loop = asyncio.new_event_loop()
+    asyncio.set_event_loop(loop)
+
     BOT_TOKEN = "8966159307:AAFnHG8h-D6uhEhSh6LmUVe7Ujkpry9du2E"
     app = Application.builder().token(BOT_TOKEN).build()
 
@@ -385,15 +388,15 @@ def run_telegram_bot():
     app.add_handler(CommandHandler("report_month", get_report))
     app.add_handler(CommandHandler("report_leave", get_report))
 
-    print("🤖 Telegram Bot Worker ចាប់ផ្តើមរត់...")
+    print("🤖 Telegram Bot Worker ចាប់ផ្តើមរត់ជាមួយ Event Loop ថ្មី...")
     app.run_polling(close_loop=False)
 
 if __name__ == "__main__":
-    # ១. បង្កើត Thread មួយដាច់ដោយឡែកសម្រាប់រត់ Telegram Bot នៅខាងក្រោយ (Background)
+    # ១. រត់ Telegram Bot ក្នុង Background Thread
     bot_thread = Thread(target=run_telegram_bot)
     bot_thread.daemon = True
     bot_thread.start()
 
-    # ២. រត់ Flask Web Server ជាលំហូរចម្ងាយចម្បង (Main Thread) សម្រាប់ឆ្លើយតបទៅ Render និង UptimeRobot
+    # ២. រត់ Flask Web Server ជាលំហូរចម្បង (Main Thread)
     print("🌐 Main Web Server ចាប់ផ្តើមរត់...")
     run_web_server()
